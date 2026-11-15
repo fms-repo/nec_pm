@@ -199,9 +199,9 @@ async function load(){
       </table>` : `<div class="empty-note">No Change Control Board decision recorded yet.</div>`}
 
       <div class="sign-row">
-        ${ApprovalPrint.signBlock(ap, 'submitter', 'Project Engineer / Business Unit', cr.submitterName)}
-        ${ApprovalPrint.signBlock(ap, 'reviewer', 'Reviewed By – Project Manager / Supply Chain Manager', cr.reviewedByName)}
-        ${ApprovalPrint.signBlock(ap, 'ccb', 'Change Control Board / CEO', cr.ccbApprovedByName)}
+        ${ApprovalPrint.signBlock(ap, 'submitter', cr.submitterName)}
+        ${ApprovalPrint.signBlock(ap, 'reviewer', cr.reviewedByName)}
+        ${ApprovalPrint.signBlock(ap, 'ccb', cr.ccbApprovedByName)}
       </div>
 
       <div class="footer-note">This is a computer-generated change request record from the NEC Project Management Dashboard.</div>

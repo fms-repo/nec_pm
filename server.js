@@ -2890,6 +2890,7 @@ async function serializeVowd(row) {
     lastBilledRef: row.last_billed_ref,
     contractNo: row.contract_no, contractorName: row.contractor_name,
     subcontractorId: row.subcontractor_id, subcontractorName: row.subcontractor_name || null,
+    subcontractorPoRef: row.subcontractor_po_ref || '',
     projectTitle: row.project_title,
     contractOwner: row.contract_owner, generalManager: row.general_manager, supplyChainManagement: row.supply_chain_management,
     awardedContractValue: row.awarded_contract_value, variationOrderValue: row.variation_order_value,
@@ -2968,6 +2969,7 @@ function vowdWriteFields(b, existing, previous) {
     last_billed_ref: previous ? previous.vowd_number : null, // derived with the carried-forward figures, not trusted from the request
     contract_no: b.contractNo || null, contractor_name: b.contractorName || null,
     subcontractor_id: b.subcontractorId || null,
+    subcontractor_po_ref: (typeof b.subcontractorPoRef === 'string' && b.subcontractorPoRef.trim().slice(0, 200)) || null,
     project_title: b.projectTitle || null,
     contract_owner: b.contractOwner || null, general_manager: b.generalManager || null, supply_chain_management: b.supplyChainManagement || null,
     awarded_contract_value: num(b.awardedContractValue), variation_order_value: num(b.variationOrderValue),

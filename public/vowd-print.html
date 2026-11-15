@@ -83,9 +83,9 @@
     table.vowd th, table.vowd td{padding:5px 9px;}
     .notes-block{margin-top:10px;}
     .remark-box{margin-top:8px; padding:8px 12px;}
-    .sign-row{margin-top:22px;}
-    .sign-block .line{margin-top:22px;}
-    .footer-note{margin-top:14px; padding-top:8px;}
+    .sign-row{margin-top:18px;}
+    .sign-block .line{margin-top:18px;}
+    .footer-note{margin-top:10px; padding-top:8px;}
   }
 </style>
 </head>
@@ -151,6 +151,7 @@ async function load(){
         <div>Statement Date: <b>${fmtDate(v.statementDate)}</b></div>
         <div><b>${esc(v.pcNumber||'')}</b></div>
         <div>VOWD As Of: <b>${fmtDate(v.asOfDate)}</b></div>
+        <div>VOWD % Completion: <b>${vowdPctCompletion}%</b></div>
       </div>
 
       <div class="section-label">A — Project Details</div>
@@ -173,7 +174,7 @@ async function load(){
         </tr>
         <tr>
           <td class="k">Sub Contractor</td><td class="v">${esc(v.subcontractorName || '—')}</td>
-          <td class="k">VOWD % Completion</td><td class="v">${vowdPctCompletion}%</td>
+          <td class="k">Sub Contractor PO Ref</td><td class="v">${esc(v.subcontractorPoRef || '—')}</td>
         </tr>
         ${v.approvedVoRef ? `<tr><td class="k">Approved Variation Orders Nos. *</td><td class="v" colspan="3">${esc(v.approvedVoRef)}</td></tr>` : ''}
       </table>
@@ -207,9 +208,9 @@ async function load(){
       ${v.retentionRemarks ? `<div class="remark-box"><b>Retention Released Remarks:</b> ${esc(v.retentionRemarks)}</div>` : ''}
 
       <div class="sign-row">
-        ${ApprovalPrint.signBlock(ap, 'project_manager', 'Project Manager / Business Unit Head', v.generalManager)}
-        ${ApprovalPrint.signBlock(ap, 'supply_chain', 'Supply Chain Manager', v.supplyChainManagement)}
-        ${ApprovalPrint.signBlock(ap, 'director', 'Project Director / Executive Director', p.projectSponsor)}
+        ${ApprovalPrint.signBlock(ap, 'project_manager', v.generalManager)}
+        ${ApprovalPrint.signBlock(ap, 'supply_chain', v.supplyChainManagement)}
+        ${ApprovalPrint.signBlock(ap, 'director', p.projectSponsor)}
       </div>
 
       <div class="footer-note">This is a computer-generated VOWD statement from the NEC Project Management Dashboard.</div>

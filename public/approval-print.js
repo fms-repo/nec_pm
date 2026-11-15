@@ -6,7 +6,10 @@
   css.textContent = `
     .sign-block .sig-space{min-height:40px; display:flex; align-items:flex-end;}
     .sign-block .sig-space + .line{margin-top:4px !important;}
-    .sign-block .title{font-size:.72rem; color:#6B7C85;}
+    .sign-block .line{padding-top:0 !important;}
+    .sign-block .who{margin-top:6px !important; font-size:.84rem; line-height:1.3;}
+    .sign-block .title{font-size:.74rem; color:#5B6E77; margin-top:1px; line-height:1.3;}
+    .sign-block .who.blank{font-weight:400; font-size:.72rem; color:#9AA8AF; font-style:italic;}
     .sig-stamp{font-size:.68rem; line-height:1.35; padding:3px 8px; border-radius:6px; border:1px solid; -webkit-print-color-adjust:exact; print-color-adjust:exact;}
     .sig-stamp.ok{color:#1E7A4D; border-color:#1E7A4D; background:#EAF6EF;}
     .sig-stamp.wait{color:#9A6A00; border-color:#D9A93A; background:#FFF6E0;}
@@ -30,30 +33,51 @@
   }
   const escape = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
+  // Team Members directory (name → designation). Used when a signature has only a typed-in name — nobody assigned
+  // through the approval workflow yet — so the print still shows the designation held in Team Members.
+  const norm = s => String(s || '').replace(/\s+/g, ' ').trim().toLowerCase();
+  let designations = {};
+  async function loadDirectory(){
+    try{
+      const r = await fetch('/api/team-members');
+      if(!r.ok) return;
+      (await r.json()).forEach(m => { if(m.name && !designations[norm(m.name)]) designations[norm(m.name)] = { name: m.name, designation: m.designation || '' }; });
+    }catch(e){ /* names are still shown, just without a designation */ }
+  }
+
   async function load(type, id){
+    const directory = loadDirectory();
     try{
       const r = await fetch(`/api/approvals/${type}/${id}`);
+      await directory;
       if(!r.ok) return null;
       const state = await r.json();
       state.byRole = {};
       const steps = state.locked ? state.current : state.draft;
       steps.forEach(s => { state.byRole[s.roleKey] = s; });
       return state;
-    }catch(e){ return null; }
+    }catch(e){ await directory; return null; }
   }
 
-  // One signature block. An approver assigned through the workflow replaces the typed-in name.
-  function signBlock(state, key, role, fallbackName, fallbackTitle){
+  // One signature block: the signature line with the person's name and designation under it, nothing else.
+  // The person is the approver assigned through the workflow (name and designation from Team Members);
+  // the typed-in name is only a fallback for a document nobody has been assigned to yet. The signature
+  // role ("Supply Chain Manager" etc.) is deliberately not printed.
+  function signBlock(state, key, fallbackName, fallbackTitle){
     const step = state && state.byRole[key];
-    const name = step ? step.name : fallbackName, title = step ? step.designation : fallbackTitle;
+    const known = step ? null : designations[norm(fallbackName)];
+    const name = step ? step.name : (known ? known.name : fallbackName);
+    const title = step ? step.designation : (fallbackTitle || (known ? known.designation : ''));
     let st = '';
     if(step && state.locked){
       if(step.status === 'Approved') st = `<div class="sig-stamp ok">&#10003; Approved electronically<br>${escape(stamp(step.actedAt))} &middot; ${escape(step.actedBy || '')}</div>`;
       else if(step.status === 'Rejected') st = `<div class="sig-stamp bad">Rejected ${escape(stamp(step.actedAt))}</div>`;
       else st = '<div class="sig-stamp wait">Awaiting signature</div>';
     }
-    return `<div class="sign-block"><div class="sig-space">${st}</div><div class="line"></div><div class="role">${escape(role)}</div>
-      <div class="who">${escape(name || '')}</div>${title ? `<div class="title">${escape(title)}</div>` : ''}</div>`;
+    const who = name
+      ? `<div class="who">${escape(name)}</div>${title ? `<div class="title">${escape(title)}</div>` : ''}`
+      : '<div class="who blank">Name &amp; designation</div>';
+    return `<div class="sign-block"><div class="sig-space">${st}</div><div class="line"></div>${who}</div>`;
   }
 
   // Approve / Reject bar for the person whose turn it is; a short status line for everyone else.

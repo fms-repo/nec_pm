@@ -8281,11 +8281,13 @@ function applyVowdSubcontractor(d){
     const next = {
       vo: previous ? previous.variationOrderValue : 0,
       voRef: previous ? (previous.approvedVoRef||'') : '',
-      vat: previous ? previous.vatPct : 5
+      vat: previous ? previous.vatPct : 5,
+      po: previous ? (previous.subcontractorPoRef||'') : ''
     };
     if(d.variationOrderValue===a.vo) d.variationOrderValue = next.vo;
     if((d.approvedVoRef||'')===a.voRef) d.approvedVoRef = next.voRef;
     if(d.vatPct===a.vat) d.vatPct = next.vat;
+    if((d.subcontractorPoRef||'')===(a.po||'')) d.subcontractorPoRef = next.po; // a PO ref the user typed is kept
     d._auto = next;
   }
   return previous;
@@ -8301,12 +8303,13 @@ function defaultVowdDraft(){
     lastBilledRef: previous ? previous.vowdNumber : '',
     contractNo: p ? (p.contractReference||'') : '', contractorName: p ? (p.contractor||'') : '',
     subcontractorId: subId,
+    subcontractorPoRef: previous ? (previous.subcontractorPoRef||'') : '',
     projectTitle: p ? (p.name||'') : '',
     generalManager:'', supplyChainManagement:'',
     awardedContractValue: p ? +p.contractValue.toFixed(3) : 0,
     variationOrderValue: previous ? previous.variationOrderValue : 0,
     approvedVoRef: previous ? (previous.approvedVoRef||'') : '', vatPct: previous ? previous.vatPct : 5,
-    _auto: { vo: previous ? previous.variationOrderValue : 0, voRef: previous ? (previous.approvedVoRef||'') : '', vat: previous ? previous.vatPct : 5 },
+    _auto: { vo: previous ? previous.variationOrderValue : 0, voRef: previous ? (previous.approvedVoRef||'') : '', vat: previous ? previous.vatPct : 5, po: previous ? (previous.subcontractorPoRef||'') : '' },
     ...vowdLbCarryForwardClient(previous),
     cumWorkDone:0, cumVariations:0, cumMaterialsAtSite:0, cumAdvancePaid:0, cumAdvanceRecovered:0, cumRetentionDeduction:0, cumPreviouslyCertified:0, cumOtherDeductions:0,
     cumPreviouslyCertifiedManual:false,
@@ -8426,6 +8429,11 @@ function renderVowdBuilder(){
           ${!(pfCurrentProject.subcontractors||[]).length ? `<div style="font-size:.68rem;color:var(--muted);margin-top:4px;">No sub contractors assigned to this project — add them on the Project Brief tab.</div>` : ''}
         </div>
         <div>
+          <label class="form-label-sm">Sub Contractor PO Ref <span style="font-weight:400;color:var(--grey);">· optional</span></label>
+          <input class="form-control" id="vowdSubPoRef" maxlength="200" value="${esc(d.subcontractorPoRef||'')}" placeholder="e.g. PO-2026-0457">
+          <div class="sub-planned-note">Free text — shown on the VOWD print preview.</div>
+        </div>
+        <div>
           <label class="form-label-sm">Sub Contractor Planned Value <span style="font-weight:400;color:var(--grey);">· from Sequence of Events</span></label>
           <input class="form-control" id="vowdSubPlanned" value="—" disabled>
           <div class="sub-planned-note" id="vowdSubPlannedNote">Choose a Sub Contractor to see its accumulated planned value.</div>
@@ -8532,7 +8540,7 @@ function renderVowdBuilder(){
     }
   });
   bind('vowdStatementDate','statementDate'); bind('vowdFinancialYear','financialYear'); bind('vowdAsOfDate','asOfDate');
-  bind('vowdContractNo','contractNo'); bind('vowdContractorName','contractorName'); bind('vowdProjectTitle','projectTitle');
+  bind('vowdContractNo','contractNo'); bind('vowdContractorName','contractorName'); bind('vowdProjectTitle','projectTitle'); bind('vowdSubPoRef','subcontractorPoRef');
   document.getElementById('vowdGeneralManager').addEventListener('change', e=>{ d.generalManager = e.target.value; });
   bind('vowdSupplyChain','supplyChainManagement');
   bind('vowdAwardedValue','awardedContractValue', v=>Number(v)||0);
@@ -8635,7 +8643,7 @@ function serverVowdToDraft(v){
     id:v.id, vowdNumber:v.vowdNumber, pcNumber:v.pcNumber, status:v.status,
     statementDate:v.statementDate, financialYear:v.financialYear, asOfDate:v.asOfDate,
     lastBilledRef:v.lastBilledRef,
-    contractNo:v.contractNo, contractorName:v.contractorName, subcontractorId:v.subcontractorId, projectTitle:v.projectTitle,
+    contractNo:v.contractNo, contractorName:v.contractorName, subcontractorId:v.subcontractorId, subcontractorPoRef:v.subcontractorPoRef||'', projectTitle:v.projectTitle,
     generalManager:v.generalManager, supplyChainManagement:v.supplyChainManagement,
     awardedContractValue:v.awardedContractValue, variationOrderValue:v.variationOrderValue,
     approvedVoRef:v.approvedVoRef, vatPct:v.vatPct,
@@ -8664,7 +8672,7 @@ async function saveVowdDraft(){
   const payload = {
     status:d.status, statementDate:d.statementDate, financialYear:d.financialYear, asOfDate:d.asOfDate,
     lastBilledRef:d.lastBilledRef,
-    contractNo:d.contractNo, contractorName:d.contractorName, subcontractorId:d.subcontractorId, projectTitle:d.projectTitle,
+    contractNo:d.contractNo, contractorName:d.contractorName, subcontractorId:d.subcontractorId, subcontractorPoRef:(d.subcontractorPoRef||'').trim(), projectTitle:d.projectTitle,
     generalManager:d.generalManager, supplyChainManagement:d.supplyChainManagement,
     awardedContractValue:d.awardedContractValue, variationOrderValue:d.variationOrderValue,
     approvedVoRef:d.approvedVoRef, vatPct:d.vatPct,
