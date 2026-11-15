@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Project Data Sheet</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Sora:wght@600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink:#0B2B3C; --muted:#5B6E77; --border:#E1E7EA; --surface:#F6F8F9;
+    --teal:#1B7A8C; --teal-dark:#0F4C5C; --navy:#1E355E; --sand:#C9A15A; --green:#2E8B57; --amber:#D99A22; --red:#C94C4C;
+  }
+  *{box-sizing:border-box;}
+  body{
+    font-family:'Inter',sans-serif; color:var(--ink); background:#DDE3E6; margin:0; padding:28px 0;
+    -webkit-font-smoothing:antialiased;
+  }
+  .toolbar{ max-width:860px; margin:0 auto 16px; display:flex; justify-content:space-between; align-items:center; padding:0 4px; }
+  .toolbar .hint{font-size:.82rem; color:#42535C;}
+  .btn{ border:none; border-radius:8px; padding:9px 18px; font-size:.86rem; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:7px; }
+  .btn-print{background:var(--navy); color:#fff;}
+  .btn-back{background:#fff; color:var(--ink); border:1px solid #C7D0D4; margin-right:8px;}
+
+  .sheet{ max-width:860px; margin:0 auto; background:#fff; padding:40px 44px; border-radius:6px; box-shadow:0 6px 24px rgba(11,43,60,.14); }
+  .head-row{display:flex; justify-content:space-between; align-items:flex-start; gap:20px; border-bottom:3px solid var(--navy); padding-bottom:16px;}
+  .head-left .name{font-family:'Sora',sans-serif; font-weight:800; font-size:1.25rem; color:var(--navy); max-width:480px;}
+  .head-left .bu-logo{max-height:40px; max-width:200px; object-fit:contain; margin-bottom:6px; display:block;}
+  .head-left .code{font-size:.82rem; color:var(--muted); margin-top:3px;}
+  .head-right{text-align:right;}
+  .head-right .doc-title{font-family:'Sora',sans-serif; font-weight:800; font-size:1.1rem; letter-spacing:.4px; color:var(--ink);}
+  .pill-row{margin-top:8px; display:flex; gap:6px; justify-content:flex-end; flex-wrap:wrap;}
+  .pill{display:inline-block; padding:4px 12px; border-radius:20px; font-size:.7rem; font-weight:800; letter-spacing:.3px; text-transform:uppercase;}
+
+  .section-label{ margin:20px 0 10px; font-family:'Sora',sans-serif; font-weight:700; font-size:.8rem; color:var(--navy); text-transform:uppercase; letter-spacing:.4px; border-bottom:1px solid var(--border); padding-bottom:6px; }
+
+  table.facts{width:100%; border-collapse:collapse; font-size:.82rem;}
+  table.facts td{border:1px solid var(--border); padding:7px 10px; vertical-align:top;}
+  table.facts td.k{width:24%; background:var(--surface); font-weight:700; color:#42535C;}
+  table.facts td.v{width:26%;}
+
+  .stat-row{display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin-top:6px;}
+  .stat-card{border:1px solid var(--border); border-radius:8px; padding:10px 12px;}
+  .stat-card h5{font-size:.62rem; text-transform:uppercase; letter-spacing:.4px; color:var(--muted); margin:0 0 4px;}
+  .stat-card div.val{font-size:1rem; font-weight:800; color:var(--ink);}
+  .stat-card div.sub{font-size:.7rem; color:var(--muted); margin-top:2px;}
+
+  .text-block{margin-top:8px; font-size:.82rem; color:#42535C; line-height:1.6;}
+  .text-block h5{font-size:.68rem; text-transform:uppercase; letter-spacing:.4px; color:var(--muted); margin:0 0 4px;}
+
+  .milestone-box{margin-top:10px; padding:10px 14px; background:var(--surface); border:1px solid var(--border); border-radius:8px; font-size:.82rem;}
+
+  .footer-note{margin-top:30px; padding-top:12px; border-top:1px solid var(--border); font-size:.7rem; color:var(--muted); text-align:center;}
+
+  .loading, .error-state{max-width:860px; margin:60px auto; text-align:center; color:#42535C; font-size:.95rem;}
+
+  @media print{
+    body{background:#fff; padding:0;}
+    .toolbar{display:none;}
+    .sheet{box-shadow:none; border-radius:0; max-width:100%; padding:0 6mm; margin:0;}
+    @page{ size:A4; margin:12mm 11mm; }
+  }
+</style>
+</head>
+<body>
+  <div class="toolbar">
+    <span class="hint">One-page project profile. Print or save as PDF using your browser's print dialog.</span>
+    <span>
+      <button class="btn btn-back" onclick="window.close()">Close</button>
+      <button class="btn btn-print" id="printBtn"><svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M2 4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v3H2V4zm1 5H2v3a1 1 0 0 0 1 1h1v2a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1v-2h1a1 1 0 0 0 1-1V9h-1M5 14v-3h6v3H5z"/></svg> Print / Save as PDF</button>
+    </span>
+  </div>
+  <div id="root"><div class="loading">Loading project data sheet…</div></div>
+
+<script>
+const fmtOMR = (v)=> 'OMR ' + (Number(v)||0).toLocaleString('en-US', {minimumFractionDigits:3, maximumFractionDigits:3});
+// DD/MM/YYYY. A plain ISO date ('YYYY-MM-DD') is read as a calendar date, with no timezone shift.
+const fmtDate = (s)=> { if(!s) return '—'; const iso = typeof s==='string' && s.match(/^(\d{4})-(\d{2})-(\d{2})$/); if(iso) return `${iso[3]}/${iso[2]}/${iso[1]}`; const d = new Date(s); return isNaN(d) ? '—' : `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()}`; };
+const HEALTH_COLOR = {'On Track':'#2E8B57','At Risk':'#D99A22','Critical':'#C94C4C'};
+const STATUS_COLOR = {'Not Started':'#8A97A0','Active':'#1B7A8C','Completed':'#2E8B57','At Risk':'#D99A22','Delayed':'#C94C4C'};
+function esc(s){
+  return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+async function load(){
+  const params = new URLSearchParams(window.location.search);
+  const id = params.get('id');
+  const root = document.getElementById('root');
+  if(!id){ root.innerHTML = '<div class="error-state">No project specified.</div>'; return; }
+  let p, milestones = [];
+  try{
+    const r = await fetch(`/api/projects/${id}`);
+    if(!r.ok) throw new Error('Project not found');
+    p = await r.json();
+    milestones = await (await fetch(`/api/milestones?projectId=${id}`)).json();
+  }catch(e){
+    root.innerHTML = `<div class="error-state">Could not load this project — ${e.message}.</div>`;
+    return;
+  }
+  document.title = `Data Sheet — ${p.name}`;
+
+  const evs = [...(p.events||[])].sort((a,b)=>a.seqNo-b.seqNo);
+  const activeEvt = evs.find(e=>e.status!=='Completed');
+  const phase = evs.length ? (activeEvt? activeEvt.stage : evs[evs.length-1].stage) : '—';
+
+  const today = new Date();
+  const upcoming = (milestones||[]).filter(m=>m.dueDate).map(m=>({...m, due:new Date(m.dueDate)})).sort((a,b)=>a.due-b.due);
+  const nextMilestone = upcoming.find(m=>m.due>=today) || upcoming[upcoming.length-1] || null;
+
+  const itemizedCost = p.costStatement ? p.costStatement.totals.total : 0;
+  const variance = +(p.actualPct - p.plannedPct).toFixed(1);
+
+  root.innerHTML = `
+    <div class="sheet">
+      <div class="head-row">
+        <div class="head-left">
+          ${p.businessUnitLogoUrl ? `<img class="bu-logo" src="${esc(p.businessUnitLogoUrl)}" alt="${esc(p.businessUnit || '')}">` : ''}
+          <div class="name">${esc(p.name)}</div>
+          <div class="code">${esc(p.code)} · ${esc(p.governorate||'')}${p.city? ' ('+esc(p.city)+')':''}</div>
+        </div>
+        <div class="head-right">
+          <div class="doc-title">PROJECT DATA SHEET</div>
+          <div class="pill-row">
+            <span class="pill" style="background:${STATUS_COLOR[p.status]}22;color:${STATUS_COLOR[p.status]};">${esc(p.status)}</span>
+            <span class="pill" style="background:${HEALTH_COLOR[p.health]}22;color:${HEALTH_COLOR[p.health]};">${esc(p.health)}</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="stat-row">
+        <div class="stat-card"><h5>Planned / Actual</h5><div class="val">${p.plannedPct}% / ${p.actualPct}%</div><div class="sub">Variance ${variance>=0?'+':''}${variance}%</div></div>
+        <div class="stat-card"><h5>Current Phase</h5><div class="val" style="font-size:.86rem;">${esc(phase)}</div></div>
+        <div class="stat-card"><h5>Approved Budget</h5><div class="val">${fmtOMR(p.approvedBudget)}</div><div class="sub">Utilization ${p.costUtilization}%</div></div>
+        <div class="stat-card"><h5>Expected Delay</h5><div class="val">${p.expectedDelayDays} days</div></div>
+      </div>
+
+      <div class="section-label">Project Details</div>
+      <table class="facts">
+        <tr>
+          <td class="k">Project Type</td><td class="v">${esc(p.type)}</td>
+          <td class="k">Contractor</td><td class="v">${esc(p.contractor||'Unassigned')}</td>
+        </tr>
+        <tr>
+          <td class="k">Business Unit</td><td class="v">${esc(p.businessUnit||'Unassigned')}</td>
+          <td class="k">Project Manager</td><td class="v">${esc(p.projectManager||'Unassigned')}</td>
+        </tr>
+        <tr>
+          <td class="k">Priority</td><td class="v">${esc(p.priority||'—')}</td>
+          <td class="k">Contract Ref / PO Ref</td><td class="v">${esc(p.contractReference||'—')}</td>
+        </tr>
+        <tr>
+          <td class="k">Client</td><td class="v">${esc(p.fundingSource||'—')}</td>
+          <td class="k">Project Sponsor</td><td class="v">${esc(p.projectSponsor||'—')}</td>
+        </tr>
+        <tr>
+          <td class="k">Planned Start</td><td class="v">${fmtDate(p.startDate)}</td>
+          <td class="k">Planned Completion</td><td class="v">${fmtDate(p.endDate)}</td>
+        </tr>
+        <tr>
+          <td class="k">Revised Completion</td><td class="v" colspan="3">${fmtDate(p.revisedCompletionDate || p.endDate)}</td>
+        </tr>
+      </table>
+
+      <div class="section-label">Financial Summary</div>
+      <table class="facts">
+        <tr>
+          <td class="k">Contract Value</td><td class="v">${fmtOMR(p.contractValue)}</td>
+          <td class="k">Revised Contract Value</td><td class="v">${fmtOMR(p.revisedContractValue ?? p.contractValue)}</td>
+        </tr>
+        <tr>
+          <td class="k">Committed Cost</td><td class="v">${fmtOMR(p.committedCost)}</td>
+          <td class="k">Actual Cost</td><td class="v">${fmtOMR(p.actualCost)}</td>
+        </tr>
+        <tr>
+          <td class="k">Itemized Cost (Materials + Crew)</td><td class="v" colspan="3">${fmtOMR(itemizedCost)}</td>
+        </tr>
+      </table>
+
+      <div class="section-label">Delivery Snapshot</div>
+      <table class="facts">
+        <tr>
+          <td class="k">Open Issues</td><td class="v">${p.openIssues}</td>
+          <td class="k">Critical Risks</td><td class="v">${p.criticalRisks}</td>
+        </tr>
+        <tr>
+          <td class="k">Materials Tracked</td><td class="v">${p.materials.length}</td>
+          <td class="k">Crew / Contractor Allocations</td><td class="v">${p.crews.length}</td>
+        </tr>
+      </table>
+      <div class="milestone-box"><strong>Next Milestone:</strong> ${nextMilestone ? `${esc(nextMilestone.milestone)} — ${fmtDate(nextMilestone.dueDate)} (${esc(nextMilestone.status)})` : 'None scheduled'}</div>
+
+      ${p.objective ? `<div class="text-block"><h5>Objective</h5>${esc(p.objective)}</div>` : ''}
+      ${p.scope ? `<div class="text-block"><h5>Scope of Work</h5>${esc(p.scope)}</div>` : ''}
+
+      <div class="footer-note">This is a computer-generated project data sheet from the NEC Project Management Dashboard.</div>
+    </div>
+  `;
+}
+
+document.getElementById('printBtn').addEventListener('click', ()=> window.print());
+load();
+</script>
+</body>
+</html>

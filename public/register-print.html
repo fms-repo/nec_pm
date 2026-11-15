@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Register</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Sora:wght@600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink:#0B2B3C; --muted:#5B6E77; --border:#E1E7EA; --surface:#F6F8F9;
+    --teal:#1B7A8C; --navy:#1E355E; --green:#2E8B57; --amber:#D99A22; --red:#C94C4C; --maroon:#7A1F2B;
+  }
+  *{box-sizing:border-box;}
+  body{ font-family:'Inter',sans-serif; color:var(--ink); background:#DDE3E6; margin:0; padding:24px 0 40px; -webkit-font-smoothing:antialiased; }
+  .toolbar{ max-width:1180px; margin:0 auto 14px; display:flex; justify-content:space-between; align-items:center; gap:12px; padding:0 4px; flex-wrap:wrap; }
+  .toolbar .hint{font-size:.82rem; color:#42535C;}
+  .btn{ border:none; border-radius:8px; padding:9px 18px; font-size:.86rem; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:7px; }
+  .btn-print{background:var(--navy); color:#fff;}
+  .btn-back{background:#fff; color:var(--ink); border:1px solid #C7D0D4; margin-right:8px;}
+  .sheet{ max-width:1180px; margin:0 auto; background:#fff; padding:28px 32px; border-radius:6px; box-shadow:0 6px 24px rgba(11,43,60,.14); }
+  .head-row{display:flex; justify-content:space-between; align-items:flex-start; gap:20px; border-bottom:3px solid var(--navy); padding-bottom:12px;}
+  .company{font-family:'Sora',sans-serif; font-weight:800; font-size:1rem; color:var(--navy);}
+  .sub{font-size:.74rem; color:var(--muted); margin-top:3px;}
+  .head-right{text-align:right;}
+  .doc-title{font-family:'Sora',sans-serif; font-weight:800; font-size:1.15rem;}
+  .filters{display:flex; gap:8px 18px; flex-wrap:wrap; margin:12px 0 4px; font-size:.76rem; color:var(--muted);}
+  .filters b{color:var(--ink);}
+  .chips{display:flex; gap:8px; flex-wrap:wrap; margin:8px 0 12px;}
+  .chip{font-size:.7rem; font-weight:700; padding:3px 10px; border-radius:12px; background:var(--surface); color:var(--ink); border:1px solid var(--border); -webkit-print-color-adjust:exact; print-color-adjust:exact;}
+  table{width:100%; border-collapse:collapse; font-size:.72rem;}
+  thead{display:table-header-group;}
+  th{background:var(--surface); text-align:left; font-size:.6rem; text-transform:uppercase; letter-spacing:.3px; color:var(--muted); padding:6px 7px; border-bottom:1.5px solid var(--border); -webkit-print-color-adjust:exact; print-color-adjust:exact;}
+  td{padding:6px 7px; border-bottom:1px solid #EEF2F4; vertical-align:top;}
+  tr{break-inside:avoid;}
+  .t{font-weight:600;} .d{color:var(--muted); font-size:.66rem; margin-top:2px;}
+  .tag{display:inline-block; font-size:.58rem; font-weight:800; padding:1px 6px; border-radius:8px; margin-left:5px; color:#fff; background:var(--maroon); -webkit-print-color-adjust:exact; print-color-adjust:exact;}
+  .tag.over{background:var(--red);}
+  .score{display:inline-block; min-width:26px; text-align:center; font-weight:800; padding:2px 6px; border-radius:6px; color:#fff; -webkit-print-color-adjust:exact; print-color-adjust:exact;}
+  .band-Low{background:var(--green);} .band-Medium{background:var(--amber);} .band-High{background:#D2585A;} .band-Critical{background:var(--maroon);}
+  .pill{display:inline-block; font-size:.64rem; font-weight:700; padding:1px 8px; border-radius:10px; background:#EEF1F2; color:var(--muted); white-space:nowrap; -webkit-print-color-adjust:exact; print-color-adjust:exact;}
+  .nowrap{white-space:nowrap;}
+  .empty{padding:50px; text-align:center; color:var(--muted);}
+  .foot{margin-top:12px; font-size:.64rem; color:var(--muted); border-top:1px solid var(--border); padding-top:8px; display:flex; justify-content:space-between;}
+  @media print{
+    body{background:#fff; padding:0;}
+    .toolbar{display:none;}
+    .sheet{box-shadow:none; border-radius:0; max-width:none; padding:0;}
+    @page{ size:A4 landscape; margin:10mm 9mm; }
+  }
+</style>
+</head>
+<body>
+<div class="toolbar">
+  <span class="hint" id="hint">Loading…</span>
+  <div><button class="btn btn-back" onclick="window.close()">Close preview</button><button class="btn btn-print" id="printBtn"><svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M2 4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v3H2V4zm1 5H2v3a1 1 0 0 0 1 1h1v2a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1v-2h1a1 1 0 0 0 1-1V9h-1M5 14v-3h6v3H5z"/></svg> Print / Save as PDF</button></div>
+</div>
+<div id="out"><div class="sheet"><div class="empty">Loading…</div></div></div>
+<script>
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const dmy = iso => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso || ''); return m ? `${m[3]}/${m[2]}/${m[1]}` : '—'; };
+const qs = new URLSearchParams(location.search);
+const type = qs.get('type') === 'issues' ? 'issues' : 'risks';
+const ids = (qs.get('ids') || '').split(',').filter(Boolean).map(Number);
+const today = new Date(); const todayISO = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+const dayNum = iso => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso || ''); return m ? Date.UTC(+m[1], +m[2] - 1, +m[3]) / 86400000 : null; };
+const band = s => s >= 16 ? 'Critical' : s >= 10 ? 'High' : s >= 5 ? 'Medium' : 'Low'; // same bands as the server
+
+function risksTable(rows, multi) {
+  return `<table><thead><tr>${multi ? '<th>Project</th>' : ''}<th>Risk</th><th>Category</th><th>P×I</th><th>Score</th><th>Residual</th><th>Owner</th><th>Status</th><th>Response / mitigation plan</th><th>Target</th></tr></thead><tbody>
+  ${rows.map(x => {
+    const overdue = x.status !== 'Closed' && x.mitigationTarget && x.mitigationTarget < todayISO;
+    const sc = x.probability * x.impact;
+    return `<tr>${multi ? `<td>${esc(x.projectName)}</td>` : ''}
+      <td><div class="t">${esc(x.title)}${(x.isCritical || band(sc) === 'Critical') ? '<span class="tag">CRITICAL</span>' : ''}</div>${x.description ? `<div class="d">${esc(x.description)}</div>` : ''}</td>
+      <td>${esc(x.category)}</td><td class="nowrap">${x.probability} × ${x.impact}</td>
+      <td><span class="score band-${band(sc)}">${sc}</span></td>
+      <td>${x.residualScore != null ? `<span class="score band-${band(x.residualScore)}">${x.residualScore}</span>` : '<span class="d">—</span>'}</td>
+      <td>${esc(x.owner || 'Unassigned')}</td>
+      <td><span class="pill">${esc(x.status)}</span>${overdue ? '<span class="tag over">OVERDUE</span>' : ''}</td>
+      <td>${x.responseStrategy ? `<div class="t">${esc(x.responseStrategy)}</div>` : ''}${x.mitigationPlan ? `<div class="d">${esc(x.mitigationPlan)}</div>` : ''}</td>
+      <td class="nowrap">${dmy(x.mitigationTarget)}</td></tr>`;
+  }).join('')}</tbody></table>`;
+}
+function issuesTable(rows, multi) {
+  return `<table><thead><tr>${multi ? '<th>Project</th>' : ''}<th>Issue</th><th>Category</th><th>Priority</th><th>Assigned to</th><th>Status</th><th>Raised</th><th>Target</th><th>Age</th><th>Root cause / resolution plan</th></tr></thead><tbody>
+  ${rows.map(x => {
+    const open = x.status !== 'Resolved' && x.status !== 'Closed';
+    const age = open ? Math.max(0, Math.round(dayNum(todayISO) - dayNum(x.raisedDate))) : null;
+    return `<tr>${multi ? `<td>${esc(x.projectName)}</td>` : ''}
+      <td><div class="t">${esc(x.title)}${x.isBlocking ? '<span class="tag">BLOCKING</span>' : ''}</div>${x.description ? `<div class="d">${esc(x.description)}</div>` : ''}</td>
+      <td>${esc(x.category)}</td><td><span class="pill">${esc(x.priority)}</span></td><td>${esc(x.assignedTo || 'Unassigned')}</td>
+      <td><span class="pill">${esc(x.status)}</span>${x.isOverdue ? '<span class="tag over">OVERDUE</span>' : ''}</td>
+      <td class="nowrap">${dmy(x.raisedDate)}</td><td class="nowrap">${dmy(x.targetResolutionDate)}</td><td class="nowrap">${age == null ? '—' : age + ' d'}</td>
+      <td>${x.rootCause ? `<div><b>Cause:</b> ${esc(x.rootCause)}</div>` : ''}${x.resolutionPlan ? `<div class="d">${esc(x.resolutionPlan)}</div>` : ''}</td></tr>`;
+  }).join('')}</tbody></table>`;
+}
+
+(async function () {
+  const out = document.getElementById('out');
+  try {
+    const r = await fetch(type === 'risks' ? '/api/risks' : '/api/issues');
+    if (r.status === 401) { location.href = '/login.html?expired=1'; return; }
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'Request failed (' + r.status + ')');
+    const all = await r.json();
+    const byId = new Map(all.map(x => [x.id, x]));
+    const rows = ids.map(id => byId.get(id)).filter(Boolean); // same rows, same order as the screen
+    const title = type === 'risks' ? 'Risk Register' : 'Issue Log';
+    document.title = title;
+    const projects = new Set(rows.map(x => x.projectId));
+    const multi = projects.size > 1;
+    const chips = type === 'risks'
+      ? ['Critical', 'High', 'Medium', 'Low'].map(b => [b, rows.filter(x => band(x.probability * x.impact) === b).length]).filter(c => c[1]).map(c => `${c[1]} ${c[0]}`)
+      : [...new Set(rows.map(x => x.status))].map(s => `${rows.filter(x => x.status === s).length} ${s}`);
+    const open = type === 'risks' ? rows.filter(x => x.status !== 'Closed').length : rows.filter(x => x.status !== 'Resolved' && x.status !== 'Closed').length;
+    const overdue = rows.filter(x => type === 'risks' ? (x.status !== 'Closed' && x.mitigationTarget && x.mitigationTarget < todayISO) : x.isOverdue).length;
+    out.innerHTML = `<div class="sheet">
+      <div class="head-row">
+        <div><div class="company">Water Rehabilitation Programme</div><div class="sub">${type === 'risks' ? 'Risk management' : 'Issue management'}</div></div>
+        <div class="head-right"><div class="doc-title">${title}</div><div class="sub">Printed ${dmy(todayISO)}</div></div>
+      </div>
+      <div class="filters"><span>Project: <b>${esc(qs.get('project') || 'All projects')}</b></span><span>View: <b>${esc(qs.get('view') || 'All')}</b></span>
+        ${qs.get('q') ? `<span>Search: <b>“${esc(qs.get('q'))}”</b></span>` : ''}<span><b>${rows.length}</b> ${type === 'risks' ? 'risk' : 'issue'}${rows.length === 1 ? '' : 's'} · <b>${open}</b> open · <b>${overdue}</b> overdue</span></div>
+      <div class="chips">${chips.map(c => `<span class="chip">${esc(c)}</span>`).join('')}</div>
+      ${rows.length ? (type === 'risks' ? risksTable(rows, multi) : issuesTable(rows, multi)) : `<div class="empty">Nothing to print for the current filters.</div>`}
+      <div class="foot"><span>${type === 'risks' ? 'Score = probability × impact (1–5 each): Low 1–4 · Medium 5–9 · High 10–15 · Critical 16–25.' : ''}</span><span>Generated from the dashboard</span></div>
+    </div>`;
+    document.getElementById('hint').textContent = `Print preview — ${rows.length} ${title.toLowerCase()} row${rows.length === 1 ? '' : 's'} as listed on screen`;
+  } catch (e) {
+    out.innerHTML = `<div class="sheet"><div class="empty">${esc(e.message)}</div></div>`;
+    document.getElementById('hint').textContent = '';
+  }
+})();
+document.getElementById('printBtn').addEventListener('click', () => window.print());
+</script>
+</body>
+</html>

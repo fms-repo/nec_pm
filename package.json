@@ -1,0 +1,27 @@
+{
+  "name": "water-rehab-dashboard",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Water Rehabilitation Programme Management Dashboard - Node.js + PostgreSQL backend with CRUD API",
+  "main": "server.js",
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "migrate": "node db/runMigration.js",
+    "migration:new": "node db/newMigration.js",
+    "import-sqlite": "node db/importFromSqlite.js",
+    "seed": "node db/seed.js"
+  },
+  "dependencies": {
+    "compression": "^1.8.2",
+    "exceljs": "^4.4.0",
+    "express": "^4.19.2",
+    "express-session": "^1.19.0",
+    "multer": "^2.2.0",
+    "pg": "^8.23.0",
+    "xlsx": "^0.18.5"
+  }
+}

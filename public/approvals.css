@@ -1,0 +1,79 @@
+/* Approval workflow + user accounts (see approvals.js) */
+.appr-pill{display:inline-block;padding:2px 9px;border-radius:999px;font-size:.72rem;font-weight:700;white-space:nowrap;}
+.appr-none{background:var(--grey-bg);color:var(--grey);}
+.appr-pending{background:var(--amber-bg);color:var(--amber);}
+.appr-approved{background:var(--green-bg);color:var(--green);}
+.appr-rejected{background:var(--red-bg);color:var(--red);}
+.appr-muted{color:var(--muted);font-size:.78rem;}
+.appr-clip{max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.appr-error{background:var(--red-bg);color:var(--red);padding:10px 12px;border-radius:8px;font-size:.85rem;}
+.appr-note{background:var(--blue-bg);color:var(--ink);border:1px solid var(--border);border-radius:8px;padding:9px 12px;font-size:.82rem;margin:8px 0;}
+.appr-note-ok{background:var(--green-bg);color:var(--green);}
+.appr-note-bad{background:var(--amber-bg);color:var(--ink);}
+
+.approval-panel{border:1px solid var(--border);border-radius:var(--radius);background:var(--card);padding:14px 16px;margin:14px 0;}
+.appr-head{display:flex;align-items:center;justify-content:space-between;gap:10px;font-weight:700;color:var(--teal-dark);margin-bottom:10px;}
+.appr-steps{list-style:none;margin:0 0 6px;padding:0;display:flex;flex-direction:column;gap:8px;}
+.appr-step{display:flex;gap:12px;align-items:flex-start;border:1px solid var(--border);border-radius:8px;padding:9px 12px;background:var(--surface);}
+.appr-step-no{flex:0 0 auto;width:24px;height:24px;border-radius:50%;background:var(--teal-light);color:var(--teal-dark);font-size:.75rem;font-weight:700;display:flex;align-items:center;justify-content:center;}
+.appr-step-main{flex:1;min-width:0;}
+.appr-step-role{font-size:.72rem;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);font-weight:700;}
+.appr-step-when{font-size:.76rem;color:var(--muted);}
+.appr-step-comment{font-size:.8rem;font-style:italic;margin-top:2px;}
+.appr-step-status{font-size:.72rem;font-weight:700;color:var(--muted);white-space:nowrap;}
+.appr-step-approved{border-color:var(--green);background:var(--green-bg);}
+.appr-step-approved .appr-step-no{background:var(--green);color:#fff;}
+.appr-step-approved .appr-step-status{color:var(--green);}
+.appr-step-rejected{border-color:var(--red);background:var(--red-bg);}
+.appr-step-rejected .appr-step-status{color:var(--red);}
+.appr-step-voided{opacity:.55;}
+.appr-step-active{border-color:var(--amber);background:var(--amber-bg);}
+.appr-step-active .appr-step-status{color:var(--amber);}
+.appr-act{margin-top:12px;border-top:1px dashed var(--border);padding-top:12px;}
+.appr-act-title{font-weight:700;margin-bottom:6px;}
+.appr-act-buttons,.appr-buttons{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;}
+.appr-assign{display:flex;flex-direction:column;gap:8px;}
+.appr-assign-row{display:grid;grid-template-columns:24px minmax(160px,1fr) minmax(200px,1.4fr);gap:10px;align-items:center;}
+.appr-assign-label{font-size:.82rem;font-weight:600;margin:0;}
+@media (max-width:680px){.appr-assign-row{grid-template-columns:24px 1fr;}.appr-assign-row select{grid-column:1/-1;}}
+.appr-history{margin-top:10px;font-size:.82rem;}
+.appr-history summary{cursor:pointer;color:var(--teal);font-weight:600;}
+.appr-history-round{margin-top:8px;}
+
+.appr-lock-banner{background:var(--amber-bg);color:var(--amber);border:1px solid var(--amber);border-radius:8px;padding:8px 12px;font-size:.85rem;font-weight:600;margin-bottom:12px;}
+.cr-card.is-locked .cr-card-actions .icon-btn.danger,
+.cr-card.is-locked .cr-card-actions .icon-btn[title="Edit"],
+.cr-card.is-locked .btn-add-sm,
+.cr-card.is-locked .cr-subsection .icon-btn:not([title^="Print"]){display:none !important;}
+
+.appr-section{margin-bottom:22px;}
+.appr-section-title{font-weight:700;color:var(--teal-dark);margin-bottom:8px;display:flex;align-items:center;gap:8px;}
+.appr-count{background:var(--teal);color:#fff;border-radius:999px;font-size:.72rem;padding:1px 8px;}
+.appr-doc-type{font-size:.7rem;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);font-weight:700;}
+.appr-nav-badge{margin-left:auto;background:#C94C4C;color:#fff;border-radius:999px;font-size:.68rem;font-weight:700;padding:1px 7px;}
+.appr-dialog-error{background:var(--red-bg);color:var(--red);border-radius:8px;padding:8px 10px;font-size:.84rem;margin-top:10px;}
+.appr-cred{display:flex;gap:24px;flex-wrap:wrap;margin:10px 0;padding:10px 12px;background:var(--surface);border:1px solid var(--border);border-radius:8px;}
+.appr-cred-val{font-family:Consolas,monospace;font-size:1.05rem;font-weight:700;letter-spacing:.5px;user-select:all;}
+
+.side-link[hidden],.sidebar-logout[hidden]{display:none !important;}
+
+/* Roles. An approver sees only My Approvals; a read-only login has the write controls hidden
+   (the server refuses writes regardless — this just keeps the screen honest). */
+body.role-approver .filter-bar,
+body.role-approver .sidebar-nav .side-link:not([data-tab="my-approvals"]),
+body.role-approver .sidebar-nav .nav-section-label:not(:first-child){display:none !important;}
+body.role-readonly .btn-add, body.role-readonly .btn-add-sm, body.role-readonly .btn-outline-danger,
+body.role-readonly .icon-btn.danger, body.role-readonly .icon-btn[title="Edit"], body.role-readonly .icon-btn[title="Restore"]{display:none !important;}
+body.role-readonly #pmEditBtn, body.role-readonly #pmDeleteBtn, body.role-readonly #invSaveBtn, body.role-readonly #invDeleteBtn,
+body.role-readonly #vowdSaveBtn, body.role-readonly #vowdDeleteBtn, body.role-readonly #certSaveBtn, body.role-readonly #certDeleteBtn,
+body.role-readonly #crfSaveBtn, body.role-readonly #afSaveBtn, body.role-readonly #dfSaveBtn, body.role-readonly #epfSaveBtn,
+body.role-readonly #rgfSaveBtn, body.role-readonly #docUploadBtn, body.role-readonly .btn-outline-danger.btn-sm,
+body.role-readonly .evt-add-material, body.role-readonly .evt-add-crew, body.role-readonly .mat-delete-selected, body.role-readonly .crew-delete-selected,
+body.role-readonly form button[type="submit"]{display:none !important;}
+.appr-role-select{min-width:150px;font-size:.8rem;padding:3px 26px 3px 8px;}
+.appr-proj-list{max-height:320px;overflow:auto;border:1px solid var(--border);border-radius:8px;padding:6px 10px;margin-top:8px;}
+.appr-proj-list label{display:flex;gap:8px;align-items:flex-start;padding:4px 0;font-size:.84rem;cursor:pointer;}
+.appr-role-help{font-size:.78rem;color:var(--muted);margin-top:4px;}
+
+.cr-att-required{font-size:.72rem;font-weight:500;color:var(--muted);margin-left:6px;}
+.cr-att-missing{display:inline-flex;align-items:center;gap:4px;font-size:.72rem;font-weight:600;color:var(--red);background:var(--red-bg,#fdecea);border-radius:10px;padding:1px 8px;white-space:nowrap;}

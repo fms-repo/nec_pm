@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Subcontractor Performance Scorecard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Sora:wght@600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink:#0B2B3C; --muted:#5B6E77; --border:#E1E7EA; --surface:#F6F8F9;
+    --teal:#1B7A8C; --teal-dark:#0F4C5C; --navy:#1E355E; --sand:#C9A15A; --green:#2E8B57; --amber:#D99A22; --red:#C94C4C; --grey:#8A97A0;
+  }
+  *{box-sizing:border-box;}
+  body{ font-family:'Inter',sans-serif; color:var(--ink); background:#DDE3E6; margin:0; padding:28px 0; -webkit-font-smoothing:antialiased; }
+  .toolbar{ max-width:920px; margin:0 auto 16px; display:flex; justify-content:space-between; align-items:center; padding:0 4px; }
+  .toolbar .hint{font-size:.82rem; color:#42535C;}
+  .btn{ border:none; border-radius:8px; padding:9px 18px; font-size:.86rem; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:7px; }
+  .btn-print{background:var(--navy); color:#fff;}
+  .sheet{ max-width:920px; margin:0 auto 18px; background:#fff; padding:36px 42px; border-radius:6px; box-shadow:0 6px 24px rgba(11,43,60,.14); }
+  .head-row{display:flex; justify-content:space-between; align-items:flex-start; gap:20px; border-bottom:3px solid var(--navy); padding-bottom:14px;}
+  .head-left .company{font-family:'Sora',sans-serif; font-weight:800; font-size:1.05rem; color:var(--navy);}
+  .head-left .sub{font-size:.78rem; color:var(--muted); margin-top:3px;}
+  .head-right{text-align:right;}
+  .doc-title{font-family:'Sora',sans-serif; font-weight:800; font-size:1.15rem; letter-spacing:.3px;}
+  .doc-sub{font-size:.76rem; color:var(--muted); margin-top:3px;}
+  h2{font-family:'Sora',sans-serif; font-size:.9rem; margin:20px 0 8px; color:var(--navy); text-transform:uppercase; letter-spacing:.4px;}
+  .score-row{display:flex; gap:22px; align-items:center; margin-top:18px; flex-wrap:wrap;}
+  .gauge{width:92px; height:92px; border-radius:50%; display:flex; align-items:center; justify-content:center; position:relative; flex:none; -webkit-print-color-adjust:exact; print-color-adjust:exact;}
+  .gauge::after{content:""; position:absolute; inset:9px; background:#fff; border-radius:50%;}
+  .gauge span{position:relative; z-index:1; font-family:'Sora',sans-serif; font-weight:800; font-size:1.6rem;}
+  .rag{display:inline-block; white-space:nowrap; font-size:.74rem; font-weight:800; padding:3px 11px; border-radius:20px; color:#fff; -webkit-print-color-adjust:exact; print-color-adjust:exact;}
+  .note{font-size:.76rem; color:var(--muted); margin-top:6px; max-width:520px;}
+  table{width:100%; border-collapse:collapse; font-size:.78rem;}
+  th{background:var(--surface); text-align:left; font-size:.66rem; text-transform:uppercase; letter-spacing:.3px; color:var(--muted); padding:7px 8px; border-bottom:1.5px solid var(--border); -webkit-print-color-adjust:exact; print-color-adjust:exact;}
+  td{padding:6px 8px; border-bottom:1px solid #EEF2F4; vertical-align:top;}
+  td.num, th.num{text-align:right; font-variant-numeric:tabular-nums;}
+  tr{break-inside:avoid;}
+  .na{color:#9AA7AE; font-style:italic;}
+  .chip{display:inline-block; font-size:.66rem; font-weight:700; padding:1px 8px; border-radius:10px; -webkit-print-color-adjust:exact; print-color-adjust:exact;}
+  .chip.ontime{background:#E7F4EC; color:var(--green);} .chip.late{background:#FBF2DF; color:#B77A0B;} .chip.overdue{background:#FBEAEA; color:var(--red);} .chip.other{background:#EEF1F2; color:var(--muted);}
+  .kpis{display:grid; grid-template-columns:repeat(5,1fr); gap:8px; margin-top:14px;}
+  .kpi{border:1px solid var(--border); border-radius:8px; padding:8px 10px;}
+  .kpi.na{background:var(--surface); border-style:dashed;}
+  .kpi h4{margin:0; font-size:.6rem; text-transform:uppercase; letter-spacing:.35px; color:var(--muted);}
+  .kpi .v{font-family:'Sora',sans-serif; font-weight:800; font-size:1.25rem; margin-top:2px;}
+  .kpi.na .v{font-size:.78rem; font-family:'Inter',sans-serif; font-weight:600; color:var(--grey);}
+  .kpi .d{font-size:.64rem; color:var(--muted); margin-top:2px;}
+  .signoff{margin-top:22px; border:1px solid var(--border); border-radius:8px; padding:12px 14px; break-inside:avoid;}
+  .signoff .row{display:flex; gap:24px; margin-top:12px;}
+  .signoff .line{flex:1; border-bottom:1px solid #9AA7AE; height:26px; font-size:.64rem; color:var(--muted); padding-top:2px;}
+  .box{display:inline-block; width:11px; height:11px; border:1.3px solid var(--ink); border-radius:2px; vertical-align:-2px; margin-right:5px;}
+  .foot{font-size:.66rem; color:var(--muted); margin-top:16px; border-top:1px solid var(--border); padding-top:8px;}
+  .empty{padding:60px; text-align:center; color:var(--muted);}
+  .pagebreak{break-before:page;}
+  @media print{
+    body{background:#fff; padding:0;}
+    .toolbar{display:none;}
+    .sheet{box-shadow:none; border-radius:0; max-width:none; padding:0; margin:0;}
+    .sheet + .sheet{break-before:page;}
+    @page{ size:A4; margin:12mm 11mm; }
+  }
+</style>
+</head>
+<body>
+<div class="toolbar">
+  <span class="hint" id="hint">Loading…</span>
+  <button class="btn btn-print" id="printBtn"><svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M2 4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v3H2V4zm1 5H2v3a1 1 0 0 0 1 1h1v2a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1v-2h1a1 1 0 0 0 1-1V9h-1M5 14v-3h6v3H5z"/></svg> Print / Save as PDF</button>
+</div>
+<div id="out"><div class="sheet"><div class="empty">Loading scorecard…</div></div></div>
+
+<script src="/subcontractor-perf.js"></script>
+<script>
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const dmy = iso => (iso ? iso.split('-').reverse().join('/') : '—');
+const omr = v => 'OMR ' + (Number(v) || 0).toLocaleString('en-US', { minimumFractionDigits:3, maximumFractionDigits:3 });
+const rnd = v => v == null ? '—' : String(Math.round(v));
+const qs = new URLSearchParams(location.search);
+const PERIOD = SubPerf.PERIODS.some(p => p.key === qs.get('period')) ? qs.get('period') : 'all';
+const asOf = /^\d{4}-\d{2}-\d{2}$/.test(qs.get('asOf') || '') ? qs.get('asOf') : SubPerf.todayISO();
+const from = SubPerf.periodFrom(PERIOD, asOf);
+const periodLabel = SubPerf.PERIODS.find(p => p.key === PERIOD).label;
+const KP = Object.fromEntries(SubPerf.KPIS.map(k => [k.key, k]));
+const colOf = score => SubPerf.RAG_COLOR[SubPerf.ragOf(score)];
+const STATE = { ontime:'On time', late:'Late', overdue:'Overdue', pending:'Not yet due', nodate:'No planned end', nofinish:'No actual end date' };
+const chip = e => `<span class="chip ${e.state === 'ontime' ? 'ontime' : e.state === 'late' ? 'late' : e.state === 'overdue' ? 'overdue' : 'other'}">${STATE[e.state]}${(e.state === 'late' || e.state === 'overdue') ? ' · ' + e.daysLate + ' d' : ''}</span>`;
+
+function header(title, sub) {
+  return `<div class="head-row">
+    <div class="head-left"><div class="company">Water Rehabilitation Programme</div><div class="sub">Supply chain management · contractor performance review</div></div>
+    <div class="head-right"><div class="doc-title">${esc(title)}</div><div class="doc-sub">${esc(sub)}</div></div></div>`;
+}
+function methodFoot() {
+  const C = SubPerf.CONFIG;
+  return `<div class="foot"><b>How the score is worked out.</b> On-time delivery = events finished on or before the planned end date ÷ events due. Cost adherence = ${Math.round(C.costGrowthShare * 100)}% variation growth
+    (approved subcontractor change requests ÷ contract base; ${C.growthCapPct}% or more scores 0) + ${Math.round((1 - C.costGrowthShare) * 100)}% variation frequency (${C.freqCap}+ requests per contract scores 0).
+    Quality, HSE and Responsiveness are not recorded in the system yet: they are left out and their weight is shared over the KPIs that have data. An overall score needs at least ${C.minKpis} KPIs with data.
+    Overall score ≥ ${C.ragGreen} On target · ${C.ragAmber}–${C.ragGreen - 1} Watch · below ${C.ragAmber} Action needed. Generated from the dashboard on ${dmy(asOf)}.</div>`;
+}
+
+function scorecard(r, trend, total) {
+  const d = r.delivery, c = r.cost, col = SubPerf.RAG_COLOR[r.rag];
+  const kpi = (k, v, detail) => v == null
+    ? `<div class="kpi na"><h4>${KP[k].label}</h4><div class="v">Not measured</div><div class="d">${KP[k].live ? esc(detail) : 'Needs ' + esc(KP[k].needs)}</div></div>`
+    : `<div class="kpi"><h4>${KP[k].label}</h4><div class="v" style="color:${colOf(v)}">${rnd(v)}${k === 'delivery' ? '%' : ''}</div><div class="d">${detail}</div></div>`;
+  const order = { overdue:0, late:1, ontime:2, pending:3, nofinish:4, nodate:5 };
+  const evs = [...r.events].sort((a, b) => order[a.state] - order[b.state] || b.daysLate - a.daysLate);
+  const proj = p => p ? `${esc(p.code || '')} ${esc(p.name)}` : '—';
+  return `<div class="sheet">
+    ${header('Subcontractor Performance Scorecard', `${periodLabel}${from ? ' (from ' + dmy(from) + ')' : ''} · as of ${dmy(asOf)}`)}
+    <div class="score-row">
+      <div class="gauge" style="background:conic-gradient(${col} ${(r.overall || 0) * 3.6}deg,#E8EDEF 0);"><span>${rnd(r.overall)}</span></div>
+      <div>
+        <div style="font-family:'Sora',sans-serif;font-weight:800;font-size:1.2rem;">${esc(r.name)}</div>
+        <div style="margin-top:5px;"><span class="rag" style="background:${col}">${SubPerf.RAG_LABEL[r.rag]}</span>
+          ${r.rank ? `<span class="note" style="margin-left:8px;">Rank ${r.rank} of ${total}</span>` : ''}</div>
+        <div class="note">${r.projectCount} project${r.projectCount === 1 ? '' : 's'} · ${r.activeContracts} active contract${r.activeContracts === 1 ? '' : 's'} · contract value ${omr(r.contractValue)}.
+          ${r.overall == null ? (r.partial ? 'Only ' + r.kpisUsed.map(k => KP[k].label.toLowerCase()).join(' and ') + ' has data so far — an overall score needs at least ' + SubPerf.CONFIG.minKpis + ' KPIs.' : 'No recorded data to score yet.') : `Overall score from ${r.kpisUsed.map(k => KP[k].label.toLowerCase()).join(' and ')} (${r.coverage}% of the full weighting).`}</div>
+      </div>
+    </div>
+    <div class="kpis">
+      ${kpi('delivery', d.score, d.due ? `${d.ontime} of ${d.due} due events on time${d.late + d.overdue ? ' · avg ' + d.avgLateDays + ' d late' : ''}${d.lowSample ? ' · few events' : ''}` : 'No event due yet')}
+      ${kpi('cost', c ? c.score : null, c ? `Variations ${omr(c.variationValue)} (${c.growthPct}% of base) · ${c.requests} request${c.requests === 1 ? '' : 's'}` : 'No contract value recorded')}
+      ${kpi('quality', null)}${kpi('hse', null)}${kpi('responsiveness', null)}
+    </div>
+    ${trendSvg(trend.series[r.id], trend)}
+    <h2>Deliverable compliance (${d.due} due)</h2>
+    ${evs.length ? `<table><thead><tr><th>Project</th><th>Event</th><th>Planned end</th><th>Actual end</th><th>Result</th></tr></thead><tbody>
+      ${evs.map(e => `<tr><td>${proj(e.project)}</td><td>${esc(e.name)}</td><td>${dmy(e.plannedEnd)}</td><td>${dmy(e.actualEnd)}</td><td>${chip(e)}</td></tr>`).join('')}</tbody></table>` : `<div class="na">No events are linked to this subcontractor.</div>`}
+    <h2>Variations (${r.changes.length})</h2>
+    ${r.changes.length ? `<table><thead><tr><th>CR</th><th>Project</th><th>Description</th><th>Submitted</th><th>Status</th><th class="num">Cost impact</th></tr></thead><tbody>
+      ${r.changes.map(x => `<tr><td><b>${esc(x.crCode)}</b></td><td>${proj(x.project)}</td><td>${esc(x.description)}</td><td>${dmy(x.dateSubmitted)}</td><td>${esc(x.status)}</td><td class="num">${omr(x.costImpact)}</td></tr>`).join('')}</tbody></table>` : `<div class="na">No variation requests in this period.</div>`}
+    <h2>Contracts</h2>
+    <table><thead><tr><th>Project</th><th>Status</th><th class="num">Base value</th><th class="num">Approved variations</th><th class="num">Contract value</th></tr></thead><tbody>
+      ${r.contracts.map(k => `<tr><td>${proj(k.project)}</td><td>${esc(k.project.status || '')}</td><td class="num">${k.base ? omr(k.base) : '<span class="na">not recorded</span>'}</td><td class="num">${omr(k.variationValue)}</td><td class="num"><b>${omr(k.contractValue)}</b></td></tr>`).join('')}</tbody></table>
+    <div class="signoff"><b style="font-size:.78rem;">Review outcome</b>
+      <div style="margin-top:8px;font-size:.78rem;"><span class="box"></span>Renew &nbsp;&nbsp; <span class="box"></span>Renew with conditions &nbsp;&nbsp; <span class="box"></span>Do not renew &nbsp;&nbsp; <span class="box"></span>Pre-qualified &nbsp;&nbsp; <span class="box"></span>Not pre-qualified</div>
+      <div class="row"><div class="line">Comments / conditions</div></div>
+      <div class="row"><div class="line">Reviewed by (name &amp; designation)</div><div class="line">Signature</div><div class="line" style="max-width:120px;">Date</div></div>
+    </div>
+    ${methodFoot()}
+  </div>`;
+}
+
+function trendSvg(values, trend) {
+  const pts = (values || []).map((v, i) => v == null ? null : [i, v]).filter(Boolean);
+  if (pts.length < 2) return '';
+  const w = 840, h = 120, padL = 30, padR = 10, padT = 10, padB = 20, n = values.length - 1 || 1;
+  const x = i => padL + i / n * (w - padL - padR), y = v => padT + (1 - v / 100) * (h - padT - padB);
+  const line = arr => arr.map(([i, v], k) => (k ? 'L' : 'M') + x(i).toFixed(1) + ',' + y(v).toFixed(1)).join(' ');
+  const prog = trend.portfolio.map((v, i) => v == null ? null : [i, v]).filter(Boolean);
+  return `<h2>Score trend (month end)</h2><svg viewBox="0 0 ${w} ${h}" width="100%" style="max-height:150px;">
+    ${[0, 60, 80, 100].map(g => `<line x1="${padL}" x2="${w - padR}" y1="${y(g)}" y2="${y(g)}" stroke="${g === 60 ? '#C94C4C55' : g === 80 ? '#2E8B5755' : '#E1E7EA'}" stroke-dasharray="${g === 60 || g === 80 ? '3 3' : ''}"/><text x="${padL - 5}" y="${y(g) + 3}" font-size="8" text-anchor="end" fill="#5B6E77">${g}</text>`).join('')}
+    ${trend.labels.map((l, i) => `<text x="${x(i)}" y="${h - 5}" font-size="8" text-anchor="middle" fill="#5B6E77">${l}</text>`).join('')}
+    ${prog.length > 1 ? `<path d="${line(prog)}" fill="none" stroke="#8A97A0" stroke-width="1.4" stroke-dasharray="5 3"/>` : ''}
+    <path d="${line(pts)}" fill="none" stroke="#1B7A8C" stroke-width="2"/>${pts.map(([i, v]) => `<circle cx="${x(i)}" cy="${y(v)}" r="3" fill="#1B7A8C"/>`).join('')}
+  </svg><div class="note" style="margin-top:0;">Solid: this subcontractor · dashed: programme average. Months with no activity are skipped.</div>`;
+}
+
+function summary(results, port) {
+  return `<div class="sheet">
+    ${header('Subcontractor Performance Summary', `${periodLabel}${from ? ' (from ' + dmy(from) + ')' : ''} · as of ${dmy(asOf)}`)}
+    <div class="kpis" style="grid-template-columns:repeat(4,1fr);">
+      <div class="kpi"><h4>Programme score</h4><div class="v" style="color:${SubPerf.RAG_COLOR[port.rag]}">${rnd(port.overall)}</div><div class="d">${port.scored} of ${port.contractors} subcontractors scored</div></div>
+      <div class="kpi"><h4>On-time delivery</h4><div class="v" style="color:${colOf(port.delivery)}">${port.delivery == null ? '—' : rnd(port.delivery) + '%'}</div><div class="d">${port.deliveryOntime} of ${port.deliveryDue} due events</div></div>
+      <div class="kpi"><h4>Cost adherence</h4><div class="v" style="color:${colOf(port.cost)}">${rnd(port.cost)}</div><div class="d">variation growth &amp; frequency</div></div>
+      <div class="kpi"><h4>Active contracts</h4><div class="v">${port.activeContracts}</div><div class="d">${omr(port.activeValue)}</div></div>
+    </div>
+    <h2>Scorecard ranking</h2>
+    <table><thead><tr><th>#</th><th>Subcontractor</th><th class="num">Contracts</th><th class="num">Contract value</th><th class="num">On-time</th><th class="num">Cost</th><th class="num">Quality</th><th class="num">HSE</th><th class="num">Resp.</th><th class="num">Overall</th><th>Rating</th></tr></thead><tbody>
+    ${results.map(r => `<tr><td>${r.rank || '–'}</td><td><b>${esc(r.name)}</b></td><td class="num">${r.activeContracts}/${r.contracts.length}</td><td class="num">${omr(r.contractValue)}</td>
+      <td class="num">${r.scores.delivery == null ? '<span class="na">—</span>' : rnd(r.scores.delivery) + '% <span class="na">(' + r.delivery.ontime + '/' + r.delivery.due + ')</span>'}</td>
+      <td class="num">${r.scores.cost == null ? '<span class="na">—</span>' : rnd(r.scores.cost)}</td><td class="num na">n/m</td><td class="num na">n/m</td><td class="num na">n/m</td>
+      <td class="num"><b style="color:${SubPerf.RAG_COLOR[r.rag]}">${rnd(r.overall)}</b></td><td><span class="rag" style="background:${SubPerf.RAG_COLOR[r.rag]}">${SubPerf.RAG_LABEL[r.rag]}</span></td></tr>`).join('')}
+    </tbody></table>
+    <div class="note">n/m = not measured: the system holds no quality, HSE or RFI records yet.</div>
+    ${methodFoot()}
+  </div>`;
+}
+
+(async function () {
+  try {
+    const url = '/api/subcontractor-performance' + (qs.get('projects') ? '?projects=' + encodeURIComponent(qs.get('projects')) : '');
+    const r = await fetch(url);
+    if (r.status === 401) { location.href = '/login.html?expired=1'; return; }
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'Request failed (' + r.status + ')');
+    const facts = await r.json();
+    const results = SubPerf.compute(facts, { asOf, from });
+    const port = SubPerf.portfolio(results);
+    const trend = SubPerf.trend(facts, { asOf }, 12);
+    const only = Number(qs.get('contractor')) || null;
+    const out = document.getElementById('out');
+    if (only) {
+      const one = results.find(x => x.id === only);
+      if (!one) throw new Error('This subcontractor has no data for the selected projects and period.');
+      document.title = 'Scorecard - ' + one.name;
+      out.innerHTML = scorecard(one, trend, port.scored);
+      document.getElementById('hint').textContent = 'Scorecard for ' + one.name;
+    } else {
+      document.title = 'Subcontractor Performance Summary';
+      out.innerHTML = results.length ? summary(results, port) + results.map(x => scorecard(x, trend, port.scored)).join('')
+        : `<div class="sheet"><div class="empty">No subcontractors to report for the selected projects and period.</div></div>`;
+      document.getElementById('hint').textContent = `Summary and ${results.length} scorecard${results.length === 1 ? '' : 's'} — one per page`;
+    }
+  } catch (e) {
+    document.getElementById('out').innerHTML = `<div class="sheet"><div class="empty">${esc(e.message)}</div></div>`;
+    document.getElementById('hint').textContent = '';
+  }
+})();
+document.getElementById('printBtn').addEventListener('click', () => window.print());
+</script>
+</body>
+</html>

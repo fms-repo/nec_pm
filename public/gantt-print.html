@@ -1,0 +1,529 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Gantt Timeline</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Sora:wght@600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink:#0B2B3C; --muted:#5B6E77; --border:#E1E7EA; --surface:#F6F8F9;
+    --teal:#1B7A8C; --teal-dark:#0F4C5C; --navy:#1E355E; --sand:#C9A15A; --green:#2E8B57; --red:#C94C4C; --grey:#8A97A0; --orange:#D99A22;
+  }
+  *{box-sizing:border-box;}
+  body{
+    font-family:'Inter',sans-serif; color:var(--ink); background:#DDE3E6; margin:0; padding:20px 0 40px;
+    -webkit-font-smoothing:antialiased;
+  }
+  /* ---- On-screen toolbar (hidden on print) ---- */
+  .toolbar{ max-width:1250px; margin:0 auto 14px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; padding:0 4px; }
+  .toolbar .hint{font-size:.82rem; color:#42535C;}
+  .toolbar-controls{display:flex; align-items:center; gap:10px; flex-wrap:wrap;}
+  .toolbar-controls label{font-size:.76rem; color:#42535C; font-weight:600; display:flex; align-items:center; gap:5px;}
+  .toolbar-controls input[type=date]{font-size:.78rem; padding:4px 6px; border:1px solid #C7D0D4; border-radius:6px;}
+  .seg-tabs{display:inline-flex; border:1px solid #C7D0D4; border-radius:8px; overflow:hidden;}
+  .seg-tabs button{border:none; background:#fff; color:var(--ink); font-size:.78rem; font-weight:700; padding:6px 12px; cursor:pointer;}
+  .seg-tabs button.active{background:var(--navy); color:#fff;}
+  .chk-tab{display:inline-flex; align-items:center; gap:6px; font-size:.78rem; font-weight:600; color:var(--ink); background:#fff; border:1px solid #C7D0D4; border-radius:8px; padding:6px 12px; cursor:pointer;}
+  /* Column picker: which of the compact text columns print, besides WBS/Task Name (always
+     shown) and the Timeline itself (the whole point of the page). Hiding a column frees its
+     width back to the timeline, which is recomputed from the columns actually left on — see
+     TIMELINE_MM in render() — so fewer columns means a wider, more legible month/week axis. */
+  .col-toggle{position:relative; display:inline-block;}
+  .col-toggle-btn{display:inline-flex; align-items:center; gap:6px; font-size:.78rem; font-weight:600; color:var(--ink); background:#fff; border:1px solid #C7D0D4; border-radius:8px; padding:6px 12px; cursor:pointer;}
+  .col-toggle-panel{display:none; position:absolute; top:calc(100% + 4px); right:0; background:#fff; border:1px solid #C7D0D4; border-radius:8px; box-shadow:0 10px 28px rgba(11,43,60,.16); padding:8px 10px; z-index:20; min-width:160px;}
+  .col-toggle-panel.open{display:block;}
+  .col-toggle-panel .col-toggle-title{font-size:.68rem; font-weight:800; text-transform:uppercase; letter-spacing:.3px; color:#8A97A0; padding:2px 2px 6px;}
+  .col-toggle-panel label{display:flex; align-items:center; gap:7px; font-size:.78rem; font-weight:600; color:var(--ink); padding:4px 2px; cursor:pointer; white-space:nowrap;}
+  .btn{ border:none; border-radius:8px; padding:9px 18px; font-size:.86rem; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:7px; }
+  .btn-print{background:var(--navy); color:#fff;}
+  .btn-back{background:#fff; color:var(--ink); border:1px solid #C7D0D4;}
+
+  /* ---- The A3-landscape sheet itself — sized in mm so the on-screen preview is a true
+     1:1 preview of what prints, not a scaled approximation. ---- */
+  .page{ width:420mm; min-height:297mm; margin:0 auto; background:#fff; padding:10mm; border-radius:3px; box-shadow:0 6px 24px rgba(11,43,60,.14); }
+  .head-row{display:flex; justify-content:space-between; align-items:flex-start; gap:14mm; border-bottom:1.2mm solid var(--navy); padding-bottom:4mm;}
+  .head-left .bu-logo{max-height:10mm; max-width:50mm; object-fit:contain; margin-bottom:2mm; display:block;}
+  .head-left .name{font-family:'Sora',sans-serif; font-weight:800; font-size:5mm; color:var(--navy);}
+  .head-left .sub{font-size:3.1mm; color:var(--muted); margin-top:1mm;}
+  .head-right{text-align:right;}
+  .head-right .doc-title{font-family:'Sora',sans-serif; font-weight:800; font-size:5.6mm; letter-spacing:.3mm; color:var(--ink);}
+  .head-right .doc-sub{font-size:3mm; color:var(--muted); margin-top:1mm;}
+  .meta-row{display:flex; justify-content:space-between; flex-wrap:wrap; gap:3mm; margin-top:3mm; font-size:3mm; color:var(--muted);}
+  .meta-row b{color:var(--ink);}
+  .legend{display:flex; gap:5mm; flex-wrap:wrap; align-items:center; font-size:2.9mm; color:var(--muted); font-weight:600; margin-top:3mm;}
+  .legend-item{display:flex; align-items:center; gap:1.5mm;}
+  .legend-dot{width:3mm; height:3mm; border-radius:.8mm; flex:0 0 auto;}
+  .legend-swatch{width:5mm; height:2.6mm; border-radius:.8mm; flex:0 0 auto;}
+  .legend-swatch.is-planned{border:.5mm dashed #2B3A42; background:rgba(43,58,66,.45);}
+  .legend-swatch.is-actual{background:var(--teal);}
+  .legend-sep{width:.3mm; height:4mm; background:var(--border);}
+
+  /* ---- The schedule table: a real <table> so the header repeats on every printed page
+     and rows can be told not to split across a page break. ---- */
+  table.gantt{ width:100%; border-collapse:collapse; margin-top:4mm; table-layout:fixed; }
+  table.gantt col.c-wbs{width:9mm;} table.gantt col.c-task{width:48mm;} table.gantt col.c-assigned{width:24mm;}
+  table.gantt col.c-status{width:19mm;} table.gantt col.c-progress{width:18mm;}
+  table.gantt col.c-planned{width:19mm;} table.gantt col.c-actual{width:19mm;}
+  table.gantt thead th{background:var(--navy); color:#fff; font-size:2.5mm; text-transform:uppercase; letter-spacing:.2mm; font-weight:800; text-align:left; padding:1.6mm 2mm; vertical-align:bottom;}
+  table.gantt thead th.num{text-align:right;}
+  table.gantt thead tr.axis-row th{padding:0; height:9mm; vertical-align:top; position:relative; background:#16293A;}
+  table.gantt td{border-bottom:.25mm solid var(--border); padding:1.4mm 2mm; font-size:2.85mm; vertical-align:middle; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  table.gantt tr.row-group td{background:var(--surface); font-weight:700;}
+  table.gantt tr.row-group td.task-cell{color:var(--ink);}
+  table.gantt tr.row-task:nth-of-type(odd) td{background:#FBFCFC;}
+  table.gantt tr{break-inside:avoid;}
+  td.task-cell{padding-left:calc(2mm + var(--lvl,0)*4mm);}
+  td.wbs-cell{color:var(--muted); font-weight:700; font-family:'Sora',sans-serif; font-size:2.6mm;}
+  .status-dot{display:inline-block; width:1.8mm; height:1.8mm; border-radius:50%; margin-right:1.3mm;}
+  /* Same fix as dates-cell below: the generic table.gantt td rule (white-space:nowrap +
+     ellipsis) outranks a bare td.status-cell on specificity, so without matching that shape here
+     too, "Not Started"/"In Progress" truncate to "Not …"/"In P…" instead of wrapping. */
+  table.gantt td.status-cell{white-space:normal;}
+  /* A flex display set directly on a <td> doesn't reliably clip to the column's fixed width when
+     its flex children can't all fit (table-layout:fixed sizes the column from the <col>, not the
+     content, but the overflow isn't always contained) — it can visibly bleed into the next cell
+     instead of just being cut off. Keeping the <td> a plain block and putting the flex row on an
+     inner wrapper (with min-width:0, so it's actually allowed to shrink) avoids that. */
+  td.progress-cell{overflow:hidden;}
+  .progress-wrap{display:flex; align-items:center; gap:1.2mm; width:100%; min-width:0;}
+  .progress-track{flex:1 1 auto; height:1.6mm; border-radius:1mm; background:var(--surface); overflow:hidden; min-width:3mm;}
+  .progress-fill{height:100%; background:var(--teal);}
+  .progress-pct{font-size:2.6mm; font-weight:700; color:var(--muted); flex:0 0 auto; white-space:nowrap;}
+  .no-actual{color:#BFC7CB;}
+  .ongoing-tag{color:var(--teal-dark); font-weight:700;}
+  /* `table.gantt td` (1 class + 2 elements) outranks a bare `td.dates-cell` (1 class + 1
+     element) in specificity, so its white-space:nowrap was silently winning over this rule's
+     white-space:normal — dates were truncating to "01/01/20…" instead of wrapping to two lines.
+     Matching the selector shape (table.gantt td.dates-cell) makes this rule strictly more
+     specific, so the override actually applies. */
+  table.gantt td.dates-cell{font-size:2.6mm; line-height:1.3; white-space:normal;}
+
+  /* Timeline cell: fixed-width lane; bars/gridlines absolutely positioned within it in mm. */
+  col.c-timeline{width:auto;}
+  td.tl-cell{padding:0; position:relative; height:7.6mm;}
+  .tl-wrap{position:relative; height:7.6mm; overflow:hidden;}
+  .tl-grid-line{position:absolute; top:0; bottom:0; width:0; border-left:.2mm solid var(--border);}
+  .tl-today-line{position:absolute; top:0; bottom:0; width:0; border-left:.45mm dashed var(--red); z-index:2;}
+  .bar-planned{position:absolute; top:1.3mm; height:1.8mm; border-radius:1mm; border:.4mm dashed #2B3A42; box-sizing:border-box;}
+  .bar-planned.is-group{top:1.8mm; height:1.3mm;}
+  .bar-actual{position:absolute; top:3.5mm; height:3.6mm; border-radius:1mm; overflow:hidden; display:flex; align-items:center;}
+  .bar-actual.is-group{top:3.7mm; height:2.3mm; opacity:.9;}
+  .bar-actual.is-ongoing{background-image:repeating-linear-gradient(135deg,rgba(255,255,255,0) 0 1.3mm,rgba(255,255,255,.22) 1.3mm 2.6mm);}
+  .bar-fill{position:absolute; top:0; left:0; bottom:0; background:rgba(255,255,255,.35);}
+  .bar-text{position:relative; padding:0 1.2mm; font-size:2.2mm; font-weight:700; color:#fff; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
+
+  .axis-months{position:relative; height:4.6mm; overflow:hidden; border-bottom:.2mm solid rgba(255,255,255,.2);}
+  .axis-month{position:absolute; top:0; height:4.6mm; line-height:4.6mm; font-size:2.5mm; font-weight:800; color:#fff; padding-left:1mm; border-left:.2mm solid rgba(255,255,255,.25); white-space:nowrap; overflow:hidden;}
+  .axis-units{position:relative; height:4.4mm; overflow:hidden;}
+  .axis-unit{position:absolute; top:0; height:4.4mm; line-height:4.4mm; font-size:2.1mm; font-weight:700; color:#CBE0E5; text-align:center; border-left:.2mm solid rgba(255,255,255,.15); white-space:nowrap; overflow:hidden;}
+
+  .footer-note{margin-top:5mm; padding-top:2.5mm; border-top:.25mm solid var(--border); font-size:2.6mm; color:var(--muted); display:flex; justify-content:space-between;}
+  .loading, .error-state{max-width:900px; margin:60px auto; text-align:center; color:#42535C; font-size:.95rem;}
+  .empty-note{padding:12mm; text-align:center; color:var(--muted); font-size:3.4mm;}
+
+  @media print{
+    body{background:#fff; padding:0;}
+    .toolbar{display:none;}
+    .page{box-shadow:none; border-radius:0; margin:0; width:auto; min-height:0;}
+    table.gantt thead{display:table-header-group;}
+    @page{ size:A3 landscape; margin:8mm; }
+  }
+</style>
+</head>
+<body>
+  <div class="toolbar">
+    <span class="hint">Review the timeline below, then print or save as PDF (A3 landscape) using your browser's print dialog.</span>
+    <div class="toolbar-controls">
+      <label class="chk-tab"><input type="checkbox" id="showTasksChk" checked> Show tasks</label>
+      <div class="col-toggle" id="colToggle">
+        <button type="button" class="col-toggle-btn" id="colToggleBtn">Columns <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor"><path d="M4 6l4 4 4-4"/></svg></button>
+        <div class="col-toggle-panel" id="colTogglePanel">
+          <div class="col-toggle-title">Show columns</div>
+        </div>
+      </div>
+      <label>From <input type="date" id="rangeFrom"></label>
+      <label>To <input type="date" id="rangeTo"></label>
+      <button type="button" class="btn btn-back" id="resetRangeBtn" style="padding:6px 12px;font-size:.78rem;">Full Range</button>
+      <button class="btn btn-back" onclick="window.close()">Close</button>
+      <button class="btn btn-print" id="printBtn"><svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M2 4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v3H2V4zm1 5H2v3a1 1 0 0 0 1 1h1v2a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1v-2h1a1 1 0 0 0 1-1V9h-1M5 14v-3h6v3H5z"/></svg> Print / Save as PDF</button>
+    </div>
+  </div>
+  <div id="root"><div class="loading">Loading Gantt timeline…</div></div>
+
+<script>
+const STAGES = [
+  'Mobilization', 'Design & Engineering', 'Procurement',
+  'Execution / Construction', 'Testing & Commissioning',
+  'Handover', 'Defects Liability', 'Closure'
+];
+const STAGE_COLORS = {
+  'Mobilization':'#1B7A8C', 'Design & Engineering':'#0F4C5C', 'Procurement':'#C9A15A',
+  'Execution / Construction':'#C94C4C', 'Testing & Commissioning':'#2E8B57',
+  'Handover':'#7A1F2B', 'Defects Liability':'#D99A22', 'Closure':'#5B6E77'
+};
+const STATUS_COLORS = { 'Not Started':'#8A97A0', 'In Progress':'#D99A22', 'On Hold':'#E8702A', 'Completed':'#2E8B57', 'Delayed':'#C94C4C' };
+// WBS and Task Name are always shown (they're how a row is identified); the Timeline is the
+// whole point of the page and always shown too. These five are the optional, togglable columns —
+// each one hidden gives its width straight back to the Timeline (see TIMELINE_MM in render()).
+const TOGGLE_COLUMNS = [
+  { key:'assigned', label:'Assigned', widthMm:24 },
+  { key:'status',   label:'Status',   widthMm:19 },
+  { key:'progress', label:'Progress', widthMm:18 },
+  { key:'planned',  label:'Planned',  widthMm:19 },
+  { key:'actual',   label:'Actual',   widthMm:19 }
+];
+const WBS_TASK_MM = 9 + 48; // col.c-wbs + col.c-task, never hidden
+// Total printable page width in mm: with every optional column shown, this reproduces the
+// original fixed 241mm timeline (9+48+24+19+18+19+19+241 = 397mm of content on the 420mm sheet,
+// the rest being the page's own margins) — derived once here so hiding columns stays exact.
+const PAGE_CONTENT_MM = WBS_TASK_MM + TOGGLE_COLUMNS.reduce((s,c)=>s+c.widthMm,0) + 241;
+let hiddenCols = new Set();
+
+const fmtDate = (s)=> { if(!s) return '—'; const iso = typeof s==='string' && s.match(/^(\d{4})-(\d{2})-(\d{2})$/); if(iso) return `${iso[3]}/${iso[2]}/${iso[1]}`; const d = new Date(s); return isNaN(d) ? '—' : `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()}`; };
+function esc(s){ return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+// Math.min(...arr) throws "Maximum call stack size exceeded" past ~100k elements (a large
+// programme's events); these give the same results for any array size.
+const minOf = arr => arr.reduce((m, v) => (v < m ? v : m), Infinity);
+const maxOf = arr => arr.reduce((m, v) => (v > m ? v : m), -Infinity);
+function stageColor(s){ return STAGE_COLORS[s] || '#1B7A8C'; }
+function hexToRgba(hex, a){ const n=parseInt(hex.replace('#',''),16); return `rgba(${(n>>16)&255},${(n>>8)&255},${n&255},${a})`; }
+function groupStatus(tasks){
+  if(!tasks.length) return 'Not Started';
+  if(tasks.every(t=>t.status==='Completed')) return 'Completed';
+  if(tasks.some(t=>t.status==='Delayed')) return 'Delayed';
+  if(tasks.some(t=>t.status==='In Progress'||t.status==='Completed')) return 'In Progress';
+  return 'Not Started';
+}
+// In-progress tasks (Actual Start set, no Actual End) read as running through to today.
+function actualRange(start, end){
+  if(!start) return null;
+  const today = new Date(); today.setHours(0,0,0,0);
+  const effEnd = end || (today < start ? start : today);
+  return { start, end: effEnd, ongoing: !end };
+}
+
+let allProjects = [], allEvents = [], scopeIds = [];
+let showTasks = true, rangeFrom = null, rangeTo = null;
+
+function buildRows(){
+  const projects = allProjects.filter(p=> !scopeIds.length || scopeIds.includes(p.id));
+  const evs = allEvents.filter(e=> projects.some(p=>p.id===e.projectId));
+  const byProject = new Map();
+  evs.forEach(e=>{ (byProject.get(e.projectId) || byProject.set(e.projectId, []).get(e.projectId)).push(e); });
+  const multiProject = byProject.size > 1;
+  const rows = [];
+
+  const groupActual = (tasks)=>{
+    const starts = tasks.map(t=>t.actualStartDate).filter(Boolean);
+    if(!starts.length) return { actualStart:null, actualEnd:null };
+    const stillOpen = tasks.some(t=>t.actualStartDate && !t.actualEndDate);
+    const ends = tasks.map(t=>t.actualEndDate).filter(Boolean);
+    return { actualStart: new Date(minOf(starts)), actualEnd: (!stillOpen && ends.length) ? new Date(maxOf(ends)) : null };
+  };
+
+  projects.filter(p=>byProject.has(p.id)).forEach((proj, pIdx)=>{
+    const projTasks = byProject.get(proj.id);
+    const stagesPresent = STAGES.filter(s=> projTasks.some(t=>t.stage===s));
+    const projKey = `p${proj.id}`;
+    const projWbs = multiProject ? String(pIdx+1) : null;
+
+    if(multiProject){
+      const dates = projTasks.flatMap(t=>[t.plannedStartDate,t.plannedEndDate]).filter(Boolean);
+      rows.push({ key:projKey, parentKey:null, level:0, type:'project', wbs:projWbs, label:proj.name, assigned:null,
+        status:proj.status, progress:proj.actualPct,
+        start: dates.length? new Date(minOf(dates)):null, end: dates.length? new Date(maxOf(dates)):null,
+        ...groupActual(projTasks), stage:null });
+    }
+
+    stagesPresent.forEach((stage, sIdx)=>{
+      const stageTasks = projTasks.filter(t=>t.stage===stage).sort((a,b)=>a.seqNo-b.seqNo);
+      const stageKey = `${projKey}-s${sIdx}`;
+      const stageWbs = multiProject ? `${projWbs}.${sIdx+1}` : String(sIdx+1);
+      const dates = stageTasks.flatMap(t=>[t.plannedStartDate,t.plannedEndDate]).filter(Boolean);
+      const avgProgress = stageTasks.length ? Math.round(stageTasks.reduce((s,t)=>s+(t.progressPct||0),0)/stageTasks.length) : 0;
+      rows.push({ key:stageKey, parentKey: multiProject?projKey:null, level: multiProject?1:0, type:'phase', wbs:stageWbs, label:stage, assigned:null,
+        status: groupStatus(stageTasks), progress: avgProgress,
+        start: dates.length? new Date(minOf(dates)):null, end: dates.length? new Date(maxOf(dates)):null,
+        ...groupActual(stageTasks), stage });
+
+      if(showTasks){
+        stageTasks.forEach((t, tIdx)=>{
+          rows.push({ key:`${stageKey}-t${tIdx}`, parentKey:stageKey, level: multiProject?2:1, type:'task', wbs:`${stageWbs}.${tIdx+1}`,
+            label:t.eventName, assigned:t.assignedTo, status:t.status, progress:t.progressPct||0,
+            start:t.plannedStartDate, end:t.plannedEndDate, actualStart:t.actualStartDate, actualEnd:t.actualEndDate, stage });
+        });
+      }
+    });
+  });
+  return rows;
+}
+
+function horizonOf(rows){
+  let dates = rows.flatMap(r=>[r.start, r.end, r.actualStart, r.actualEnd]).filter(Boolean);
+  if(rangeFrom) dates = dates.concat([rangeFrom]);
+  if(rangeTo) dates = dates.concat([rangeTo]);
+  if(!dates.length){ const now=new Date(); return { from:new Date(now.getFullYear(),now.getMonth(),1), to:new Date(now.getFullYear(),now.getMonth()+3,0) }; }
+  const from = rangeFrom || (()=>{ const d=new Date(minOf(dates)); d.setDate(d.getDate()-3); return d; })();
+  const to = rangeTo || (()=>{ const d=new Date(maxOf(dates)); d.setDate(d.getDate()+3); return d; })();
+  return { from, to };
+}
+// The whole horizon must fit the fixed page width (no horizontal scroll on paper), so the
+// granularity of the axis — day / week / month — is chosen from how much room each unit gets,
+// not picked by the user; a long programme automatically prints at month resolution.
+function chooseGranularity(mmPerDay){
+  if(mmPerDay >= 2.6) return 'day';
+  if(mmPerDay*7 >= 9) return 'week';
+  return 'month';
+}
+function buildColumns(from, to, gran){
+  const cols = [];
+  if(gran==='day'){ let d=new Date(from); while(d<=to){ const end=new Date(d); end.setDate(end.getDate()+1); cols.push({start:new Date(d),end}); d=end; } }
+  else if(gran==='month'){ let d=new Date(from.getFullYear(),from.getMonth(),1); while(d<=to){ const end=new Date(d.getFullYear(),d.getMonth()+1,1); cols.push({start:new Date(d),end}); d=end; } }
+  else { let d=new Date(from); while(d<=to){ const end=new Date(d); end.setDate(end.getDate()+7); cols.push({start:new Date(d),end}); d=end; } }
+  return cols;
+}
+// Groups consecutive day/week columns under the same calendar month, keeping each group's own
+// start/end dates (not a pre-summed width) — position is derived from those dates the same way
+// a bar's position is, so a group can never drift from the columns/bars it sits above.
+function monthGroups(cols){
+  const groups = [];
+  cols.forEach(c=>{
+    const label = c.start.toLocaleDateString('en-GB',{month:'short',year:'numeric'});
+    if(groups.length && groups[groups.length-1].label===label) groups[groups.length-1].end = c.end;
+    else groups.push({label, start:c.start, end:c.end});
+  });
+  return groups;
+}
+// For Month granularity, each column IS a month (so a per-column month label band would be
+// redundant) — but a horizon spanning more than a year still needs the YEAR shown somewhere, or
+// "Nov Dec Jan Feb..." repeats with no way to tell which year is which. Group by year instead.
+function yearGroups(cols){
+  const groups = [];
+  cols.forEach(c=>{
+    const label = String(c.start.getFullYear());
+    if(groups.length && groups[groups.length-1].label===label) groups[groups.length-1].end = c.end;
+    else groups.push({label, start:c.start, end:c.end});
+  });
+  return groups;
+}
+function unitLabel(col, gran){
+  if(gran==='day') return String(col.start.getDate());
+  if(gran==='month') return col.start.toLocaleDateString('en-GB',{month:'short'});
+  const endIncl = new Date(col.end); endIncl.setDate(endIncl.getDate()-1);
+  return `${String(col.start.getDate()).padStart(2,'0')}–${String(endIncl.getDate()).padStart(2,'0')}`;
+}
+function xOf(date, from, mmPerDay){ return (date-from)/864e5*mmPerDay; }
+
+function actualDatesHtml(r){
+  if(!r.actualStart) return '<span class="no-actual">—</span>';
+  if(!r.actualEnd) return `${fmtDate(r.actualStart)} – <span class="ongoing-tag">Ongoing</span>`;
+  return `${fmtDate(r.actualStart)} – ${fmtDate(r.actualEnd)}`;
+}
+
+function render(){
+  const root = document.getElementById('root');
+  const rows = buildRows();
+  if(!rows.length){
+    root.innerHTML = `<div class="page"><div class="empty-note">No scheduled tasks to show for the selected project(s)/range.</div></div>`;
+    return;
+  }
+  const visibleToggleCols = TOGGLE_COLUMNS.filter(c=>!hiddenCols.has(c.key));
+  const colOn = (key)=> !hiddenCols.has(key);
+  // Every hidden column's width goes straight back to the Timeline — this is the whole point of
+  // letting columns be hidden on a long, month-axis programme (see chooseGranularity below).
+  const TIMELINE_MM = PAGE_CONTENT_MM - WBS_TASK_MM - visibleToggleCols.reduce((s,c)=>s+c.widthMm,0);
+
+  const horizon = horizonOf(rows);
+  let totalDays = Math.max(1, (horizon.to-horizon.from)/864e5);
+  let mmPerDay = TIMELINE_MM / totalDays;
+  const gran = chooseGranularity(mmPerDay);
+  // Month granularity groups columns by YEAR (see yearGroups below). If the horizon starts or
+  // ends partway through a year, that edge year's band can be just one or two months wide — too
+  // narrow for its own "2023"-style label to fit, so it prints blank even though the column is
+  // there (border tick visible, no text). Padding the whole horizon out to full calendar years
+  // "fixed" that but overcorrected: for a long multi-year programme it can add 10+ pure-padding
+  // months at each edge, squeezing every month column so thin the "Jan/Feb/Mar…" labels overlap
+  // into an unreadable run-on string. Instead, extend each edge only as far as needed to give its
+  // own year a minimum number of months (comfortably enough for the 4-digit label), never further.
+  if(gran==='month'){
+    const MIN_EDGE_MONTHS = 3;
+    const leadMonthsInYear = 12 - horizon.from.getMonth(); // months from `from` through Dec of its year
+    horizon.from = leadMonthsInYear < MIN_EDGE_MONTHS
+      ? new Date(horizon.from.getFullYear(), horizon.from.getMonth() - (MIN_EDGE_MONTHS - leadMonthsInYear), 1)
+      : new Date(horizon.from.getFullYear(), horizon.from.getMonth(), 1);
+    const trailMonthsInYear = horizon.to.getMonth() + 1; // months from Jan of its year through `to`
+    horizon.to = trailMonthsInYear < MIN_EDGE_MONTHS
+      ? new Date(horizon.to.getFullYear(), horizon.to.getMonth() + (MIN_EDGE_MONTHS - trailMonthsInYear) + 1, 0)
+      : new Date(horizon.to.getFullYear(), horizon.to.getMonth() + 1, 0);
+    totalDays = Math.max(1, (horizon.to-horizon.from)/864e5);
+    mmPerDay = TIMELINE_MM / totalDays;
+  }
+  const cols = buildColumns(horizon.from, horizon.to, gran);
+  const groups = gran==='month' ? yearGroups(cols) : monthGroups(cols);
+  const today = new Date(); today.setHours(0,0,0,0);
+  const todayX = xOf(today, horizon.from, mmPerDay);
+
+  const gridLinesHtml = cols.map(c=>`<div class="tl-grid-line" style="left:${xOf(c.start,horizon.from,mmPerDay).toFixed(2)}mm;"></div>`).join('')
+    + ((todayX>=0 && todayX<=TIMELINE_MM) ? `<div class="tl-today-line" style="left:${todayX.toFixed(2)}mm;"></div>` : '');
+
+  // Each month-band/unit is positioned from its own real date via xOf(), exactly like a bar,
+  // and clamped to the visible [0, TIMELINE_MM] strip — never a running left+=width sum. A
+  // calendar month/week column almost never divides the horizon evenly (buildColumns rounds
+  // out to real month/week boundaries), so a cumulative sum would drift past TIMELINE_MM by
+  // however much the first/last column overshoots the horizon, spilling the last label off
+  // the printed page. Clamping keeps every label inside its container no matter the overshoot.
+  const clampedSpan = (start, end) => {
+    const left = Math.max(0, xOf(start, horizon.from, mmPerDay));
+    const right = Math.min(TIMELINE_MM, xOf(end, horizon.from, mmPerDay));
+    return { left, width: Math.max(0, right - left) };
+  };
+  const monthsHtml = groups.map(g => {
+    const { left, width } = clampedSpan(g.start, g.end);
+    return width > 0 ? `<div class="axis-month" style="left:${left.toFixed(2)}mm;width:${width.toFixed(2)}mm;">${esc(g.label)}</div>` : '';
+  }).join('');
+  const unitsHtml = cols.map(c => {
+    const { left, width } = clampedSpan(c.start, c.end);
+    return width > 0 ? `<div class="axis-unit" style="left:${left.toFixed(2)}mm;width:${width.toFixed(2)}mm;">${unitLabel(c, gran)}</div>` : '';
+  }).join('');
+
+  const rowHtml = (r)=>{
+    const isGroup = r.type!=='task';
+    const statusColor = STATUS_COLORS[r.status] || '#8A97A0';
+    const color = r.type==='project' ? '#0B3B4B' : stageColor(r.stage);
+    let bars = gridLinesHtml;
+    if(r.start && r.end){
+      const left = xOf(r.start, horizon.from, mmPerDay), width = Math.max(1.2, xOf(r.end, horizon.from, mmPerDay)-left);
+      bars += `<div class="bar-planned ${isGroup?'is-group':''}" style="left:${left.toFixed(2)}mm;width:${width.toFixed(2)}mm;border-color:#2B3A42;background:rgba(43,58,66,.45);"></div>`;
+    }
+    const act = actualRange(r.actualStart, r.actualEnd);
+    if(act){
+      const left = xOf(act.start, horizon.from, mmPerDay), width = Math.max(1.2, xOf(act.end, horizon.from, mmPerDay)-left);
+      const label = width>14 ? (r.label.length>16? r.label.slice(0,14)+'…': r.label) : '';
+      bars += `<div class="bar-actual ${isGroup?'is-group':''} ${act.ongoing?'is-ongoing':''}" style="left:${left.toFixed(2)}mm;width:${width.toFixed(2)}mm;background:${color};">`
+            + (isGroup ? '' : `<div class="bar-fill" style="width:${Math.round(r.progress||0)}%;"></div>${label?`<span class="bar-text">${esc(label)}</span>`:''}`)
+            + `</div>`;
+    }
+    return `
+      <tr class="${isGroup?'row-group':'row-task'}">
+        <td class="wbs-cell">${r.wbs||''}</td>
+        <td class="task-cell" style="--lvl:${r.level};" title="${esc(r.label)}">${esc(r.label)}</td>
+        ${colOn('assigned') ? `<td>${r.assigned ? esc(r.assigned) : '<span class="no-actual">—</span>'}</td>` : ''}
+        ${colOn('status') ? `<td class="status-cell"><span class="status-dot" style="background:${statusColor}"></span>${esc(r.status)}</td>` : ''}
+        ${colOn('progress') ? `<td class="progress-cell"><div class="progress-wrap"><div class="progress-track"><div class="progress-fill" style="width:${Math.round(r.progress||0)}%;"></div></div><span class="progress-pct">${Math.round(r.progress||0)}%</span></div></td>` : ''}
+        ${colOn('planned') ? `<td class="dates-cell">${(r.start&&r.end) ? `${fmtDate(r.start)} – ${fmtDate(r.end)}` : '<span class="no-actual">—</span>'}</td>` : ''}
+        ${colOn('actual') ? `<td class="dates-cell">${actualDatesHtml(r)}</td>` : ''}
+        <td class="tl-cell"><div class="tl-wrap" style="width:${TIMELINE_MM}mm;">${bars}</div></td>
+      </tr>`;
+  };
+
+  const projects = allProjects.filter(p=> !scopeIds.length || scopeIds.includes(p.id));
+  const singleProject = projects.length===1 ? projects[0] : null;
+  const generated = new Date();
+
+  root.innerHTML = `
+    <div class="page">
+      <div class="head-row">
+        <div class="head-left">
+          ${singleProject && singleProject.businessUnitLogoUrl ? `<img class="bu-logo" src="${esc(singleProject.businessUnitLogoUrl)}">` : ''}
+          <div class="name">${singleProject ? esc(singleProject.name) : 'Programme Gantt Timeline'}</div>
+          <div class="sub">${singleProject ? `${esc(singleProject.code)} · ${esc(singleProject.governorate||'')}` : `${projects.length} project${projects.length===1?'':'s'}`}</div>
+        </div>
+        <div class="head-right">
+          <div class="doc-title">GANTT TIMELINE</div>
+          <div class="doc-sub">Generated ${fmtDate(generated)} ${String(generated.getHours()).padStart(2,'0')}:${String(generated.getMinutes()).padStart(2,'0')}</div>
+        </div>
+      </div>
+      <div class="meta-row">
+        <div>Horizon: <b>${fmtDate(horizon.from)} – ${fmtDate(horizon.to)}</b></div>
+        <div>Axis: <b>${gran[0].toUpperCase()+gran.slice(1)}</b></div>
+        <div>Detail: <b>${showTasks? 'Stages & Tasks':'Stages only'}</b></div>
+        <div>Today: <b>${fmtDate(generated)}</b></div>
+      </div>
+      <div class="legend">
+        <div class="legend-item"><span class="legend-swatch is-planned"></span>Planned</div>
+        <div class="legend-item"><span class="legend-swatch is-actual"></span>Actual</div>
+        <span class="legend-sep"></span>
+        ${[...new Set(rows.filter(r=>r.stage).map(r=>r.stage))].map(s=>`<div class="legend-item"><span class="legend-dot" style="background:${stageColor(s)}"></span>${esc(s)}</div>`).join('')}
+      </div>
+      <table class="gantt">
+        <colgroup>
+          <col class="c-wbs"><col class="c-task">${visibleToggleCols.map(c=>`<col class="c-${c.key}">`).join('')}<col class="c-timeline">
+        </colgroup>
+        <thead>
+          <tr>
+            <th>WBS</th><th>Task Name</th>${visibleToggleCols.map(c=>`<th>${esc(c.label)}</th>`).join('')}
+            <th style="padding:0;"><div class="axis-months" style="width:${TIMELINE_MM}mm;">${monthsHtml}</div></th>
+          </tr>
+          <tr class="axis-row">
+            <th colspan="${2+visibleToggleCols.length}"></th>
+            <th><div class="axis-units" style="width:${TIMELINE_MM}mm;">${unitsHtml}</div></th>
+          </tr>
+        </thead>
+        <tbody>${rows.map(rowHtml).join('')}</tbody>
+      </table>
+      <div class="footer-note">
+        <span>Water Rehabilitation Programme Management Dashboard</span>
+        <span>Bars: dashed outline = Planned · solid = Actual (filled by Progress %) · diagonal hatch = still ongoing</span>
+      </div>
+    </div>
+  `;
+}
+
+async function load(){
+  const params = new URLSearchParams(window.location.search);
+  const projParam = params.get('projects');
+  scopeIds = projParam ? projParam.split(',').map(Number).filter(Boolean) : [];
+  const root = document.getElementById('root');
+  try{
+    const [projects, eventRows] = await Promise.all([
+      fetch('/api/projects').then(r=>{ if(!r.ok) throw new Error('Could not load projects'); return r.json(); }),
+      fetch('/api/events').then(r=>{ if(!r.ok) throw new Error('Could not load events'); return r.json(); })
+    ]);
+    allProjects = projects;
+    allEvents = eventRows.map(e=>({
+      ...e,
+      plannedStartDate: e.plannedStart? new Date(e.plannedStart): null,
+      plannedEndDate: e.plannedEnd? new Date(e.plannedEnd): null,
+      actualStartDate: e.actualStart? new Date(e.actualStart): null,
+      actualEndDate: e.actualEnd? new Date(e.actualEnd): null
+    }));
+  }catch(e){
+    root.innerHTML = `<div class="error-state">Could not load the Gantt timeline — ${e.message}.</div>`;
+    return;
+  }
+  const scoped = allProjects.filter(p=> !scopeIds.length || scopeIds.includes(p.id));
+  document.title = scoped.length===1 ? `Gantt Timeline — ${scoped[0].name}` : 'Gantt Timeline';
+  render();
+}
+
+document.getElementById('showTasksChk').addEventListener('change', e=>{ showTasks = e.target.checked; render(); });
+document.getElementById('rangeFrom').addEventListener('change', e=>{ rangeFrom = e.target.value ? new Date(e.target.value) : null; render(); });
+document.getElementById('rangeTo').addEventListener('change', e=>{ rangeTo = e.target.value ? new Date(e.target.value) : null; render(); });
+document.getElementById('resetRangeBtn').addEventListener('click', ()=>{ rangeFrom=null; rangeTo=null; document.getElementById('rangeFrom').value=''; document.getElementById('rangeTo').value=''; render(); });
+document.getElementById('printBtn').addEventListener('click', ()=> window.print());
+
+const colTogglePanel = document.getElementById('colTogglePanel');
+colTogglePanel.innerHTML += TOGGLE_COLUMNS.map(c=>
+  `<label><input type="checkbox" data-col="${c.key}" checked> ${esc(c.label)}</label>`
+).join('');
+colTogglePanel.querySelectorAll('input[type=checkbox]').forEach(chk=>{
+  chk.addEventListener('change', e=>{
+    const key = e.target.dataset.col;
+    if(e.target.checked) hiddenCols.delete(key); else hiddenCols.add(key);
+    render();
+  });
+});
+document.getElementById('colToggleBtn').addEventListener('click', e=>{
+  e.stopPropagation();
+  colTogglePanel.classList.toggle('open');
+});
+document.addEventListener('click', e=>{
+  if(!document.getElementById('colToggle').contains(e.target)) colTogglePanel.classList.remove('open');
+});
+
+load();
+</script>
+</body>
+</html>

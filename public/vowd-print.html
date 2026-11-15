@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VOWD Statement</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Sora:wght@600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink:#0B2B3C; --muted:#5B6E77; --border:#E1E7EA; --surface:#F6F8F9;
+    --teal:#1B7A8C; --teal-dark:#0F4C5C; --navy:#1E355E; --sand:#C9A15A; --green:#2E8B57; --red:#C94C4C;
+  }
+  *{box-sizing:border-box;}
+  body{
+    font-family:'Inter',sans-serif; color:var(--ink); background:#DDE3E6; margin:0; padding:28px 0;
+    -webkit-font-smoothing:antialiased;
+  }
+  .toolbar{ max-width:900px; margin:0 auto 16px; display:flex; justify-content:space-between; align-items:center; padding:0 4px; }
+  .toolbar .hint{font-size:.82rem; color:#42535C;}
+  .btn{ border:none; border-radius:8px; padding:9px 18px; font-size:.86rem; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:7px; }
+  .btn-print{background:var(--navy); color:#fff;}
+  .btn-back{background:#fff; color:var(--ink); border:1px solid #C7D0D4; margin-right:8px;}
+
+  .sheet{ max-width:900px; margin:0 auto; background:#fff; padding:40px 44px; border-radius:6px; box-shadow:0 6px 24px rgba(11,43,60,.14); }
+  .head-row{display:flex; justify-content:space-between; align-items:flex-start; gap:20px; border-bottom:3px solid var(--navy); padding-bottom:16px;}
+  .head-left .company{font-family:'Sora',sans-serif; font-weight:800; font-size:1.05rem; color:var(--navy); max-width:320px;}
+  .head-left .bu-logo{max-height:36px; max-width:200px; object-fit:contain; margin-bottom:6px; display:block;}
+  .head-left .sub{font-size:.8rem; color:var(--muted); margin-top:2px;}
+  .head-right{text-align:right;}
+  .head-right .doc-title{font-family:'Sora',sans-serif; font-weight:800; font-size:1.3rem; letter-spacing:.4px; color:var(--ink);}
+  .head-right .doc-sub{font-size:.78rem; color:var(--muted); margin-top:2px;}
+  .head-right .doc-number{font-size:.88rem; font-weight:700; color:var(--teal); margin-top:6px;}
+  .status-pill{display:inline-block; margin-top:6px; padding:4px 12px; border-radius:20px; font-size:.7rem; font-weight:800; letter-spacing:.4px; text-transform:uppercase;}
+  .status-Draft{background:#EDEFF0; color:#5B6E77;}
+  .status-Issued{background:#E3F0F7; color:#1B6FA8;}
+
+  .meta-row{display:flex; justify-content:space-between; margin-top:14px; font-size:.8rem; color:var(--muted);}
+  .meta-row b{color:var(--ink);}
+
+  .section-label{ margin:22px 0 10px; font-family:'Sora',sans-serif; font-weight:700; font-size:.82rem; color:var(--navy); text-transform:uppercase; letter-spacing:.4px; border-bottom:1px solid var(--border); padding-bottom:6px; }
+
+  table.facts{width:100%; border-collapse:collapse; font-size:.82rem; margin-bottom:4px;}
+  table.facts td{border:1px solid var(--border); padding:8px 10px; vertical-align:top;}
+  table.facts td.k{width:26%; background:var(--surface); font-weight:700; color:#42535C;}
+  table.facts td.v{width:24%;}
+
+  table.vowd{width:100%; border-collapse:collapse; font-size:.82rem; margin-top:6px;}
+  table.vowd th{background:var(--navy); color:#fff; padding:9px 10px; text-align:left; font-size:.72rem; text-transform:uppercase; letter-spacing:.3px;}
+  table.vowd th.num, table.vowd td.num{text-align:right;}
+  table.vowd td{border:1px solid var(--border); padding:8px 10px;}
+  table.vowd tr.total td{background:var(--surface); font-weight:700;}
+  table.vowd tr.net td{background:#DCEEE7; font-weight:800; font-size:.9rem;}
+  table.vowd td.label{width:42%;}
+  table.vowd .hint{display:block; font-weight:400; font-size:.7rem; color:var(--muted); margin-top:2px;}
+
+  .notes-block{margin-top:20px; font-size:.82rem;}
+  .notes-block h4{font-size:.68rem; text-transform:uppercase; letter-spacing:.5px; color:var(--muted); margin:0 0 6px;}
+  .notes-block .body{color:#42535C; line-height:1.6; white-space:pre-line;}
+
+  .remark-box{margin-top:18px; padding:12px 14px; background:#FBF2DF; border:1px solid #EBD9AE; border-radius:8px; font-size:.78rem; color:#5C4A1E;}
+
+  .sign-row{display:grid; grid-template-columns:1fr 1fr 1fr; gap:24px; margin-top:48px;}
+  .sign-block .line{border-top:1px solid var(--ink); margin-top:40px; padding-top:6px;}
+  .sign-block .role{font-size:.66rem; text-transform:uppercase; letter-spacing:.4px; color:var(--muted);}
+  .sign-block .who{font-size:.8rem; font-weight:700; margin-top:2px;}
+
+  .footer-note{margin-top:36px; padding-top:12px; border-top:1px solid var(--border); font-size:.7rem; color:var(--muted); text-align:center;}
+
+  .loading, .error-state{max-width:900px; margin:60px auto; text-align:center; color:#42535C; font-size:.95rem;}
+
+  @media print{
+    body{background:#fff; padding:0;}
+    .toolbar{display:none;}
+    .sheet{box-shadow:none; border-radius:0; max-width:100%; padding:0 6mm; margin:0; font-size:.92em;}
+    table.vowd th{ -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+    @page{ size:A4; margin:9mm 9mm; }
+    /* Compacted to fit one page: tighter spacing throughout, gaps trimmed before font size. */
+    .head-row{padding-bottom:10px;}
+    .meta-row{margin-top:8px;}
+    .section-label{margin:12px 0 6px; padding-bottom:4px;}
+    table.facts td{padding:5px 9px;}
+    table.vowd th, table.vowd td{padding:5px 9px;}
+    .notes-block{margin-top:10px;}
+    .remark-box{margin-top:8px; padding:8px 12px;}
+    .sign-row{margin-top:22px;}
+    .sign-block .line{margin-top:22px;}
+    .footer-note{margin-top:14px; padding-top:8px;}
+  }
+</style>
+</head>
+<body>
+  <div class="toolbar">
+    <span class="hint">Review the VOWD statement below, then print or save as PDF using your browser's print dialog.</span>
+    <span>
+      <button class="btn btn-back" onclick="window.close()">Close</button>
+      <button class="btn btn-print" id="printBtn"><svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M2 4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v3H2V4zm1 5H2v3a1 1 0 0 0 1 1h1v2a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1v-2h1a1 1 0 0 0 1-1V9h-1M5 14v-3h6v3H5z"/></svg> Print / Save as PDF</button>
+    </span>
+  </div>
+  <div id="root"><div class="loading">Loading VOWD statement…</div></div>
+
+<script src="/approval-print.js"></script>
+<script>
+const fmtOMR3 = (v)=> 'OMR ' + (Number(v)||0).toLocaleString('en-US', {minimumFractionDigits:3, maximumFractionDigits:3});
+// DD/MM/YYYY. A plain ISO date ('YYYY-MM-DD') is read as a calendar date, with no timezone shift.
+const fmtDate = (s)=> { if(!s) return '—'; const iso = typeof s==='string' && s.match(/^(\d{4})-(\d{2})-(\d{2})$/); if(iso) return `${iso[3]}/${iso[2]}/${iso[1]}`; const d = new Date(s); return isNaN(d) ? '—' : `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()}`; };
+function esc(s){
+  return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+function vowdRow(label, lb, cum, hint){
+  return `<tr><td class="label">${esc(label)}${hint? `<span class="hint">${esc(hint)}</span>`:''}</td><td class="num">${fmtOMR3(lb)}</td><td class="num">${fmtOMR3(cum)}</td></tr>`;
+}
+
+async function load(){
+  const params = new URLSearchParams(window.location.search);
+  const id = params.get('id');
+  const root = document.getElementById('root');
+  if(!id){ root.innerHTML = '<div class="error-state">No VOWD statement specified.</div>'; return; }
+  let v;
+  try{
+    const r = await fetch(`/api/vowd-statements/${id}`);
+    if(!r.ok) throw new Error('VOWD statement not found');
+    v = await r.json();
+  }catch(e){
+    root.innerHTML = `<div class="error-state">Could not load this VOWD statement — ${e.message}.</div>`;
+    return;
+  }
+  document.title = `VOWD Statement ${v.vowdNumber}`;
+  const p = v.project || {};
+  const ap = await ApprovalPrint.load('vowd', id);
+  const lb = v.lastBilled, cum = v.cumulative;
+  const vowdPctCompletion = v.revisedContractValue > 0 ? (cum.vowdTotal / v.revisedContractValue * 100).toFixed(1) : '0.0';
+
+  root.innerHTML = `
+    <div class="sheet">
+      <div class="head-row">
+        <div class="head-left">
+          ${p.businessUnitLogoUrl ? `<img class="bu-logo" src="${esc(p.businessUnitLogoUrl)}" alt="${esc(p.businessUnit || '')}">` : ''}
+          <div class="company">${esc(p.name || v.projectTitle || '—')}</div>
+          <div class="sub">${esc(p.governorate || '')}${p.city? ' · '+esc(p.city):''}</div>
+        </div>
+        <div class="head-right">
+          <div class="doc-title">VOWD STATEMENT</div>
+          <div class="doc-sub">for Accrual and Account Closure ${v.financialYear? '· FY '+esc(v.financialYear):''}</div>
+          <div class="doc-number">${esc(v.vowdNumber)}</div>
+          <div class="status-pill status-${v.status}">${esc(v.status)}</div>
+        </div>
+      </div>
+
+      <div class="meta-row">
+        <div>Statement Date: <b>${fmtDate(v.statementDate)}</b></div>
+        <div><b>${esc(v.pcNumber||'')}</b></div>
+        <div>VOWD As Of: <b>${fmtDate(v.asOfDate)}</b></div>
+      </div>
+
+      <div class="section-label">A — Project Details</div>
+      <table class="facts">
+        <tr>
+          <td class="k">Awarded Contract &amp; PO Value (i)</td><td class="v">${fmtOMR3(v.awardedContractValue)}</td>
+          <td class="k">Contract Ref / PO Ref</td><td class="v">${esc(v.contractNo || '—')}</td>
+        </tr>
+        <tr>
+          <td class="k">Variation Order Value (ii) *</td><td class="v">${fmtOMR3(v.variationOrderValue)}</td>
+          <td class="k">Contractor / Consultant Name</td><td class="v">${esc(v.contractorName || p.contractor || '—')}</td>
+        </tr>
+        <tr>
+          <td class="k">Revised Contract Value (i)+(ii)</td><td class="v"><strong>${fmtOMR3(v.revisedContractValue)}</strong></td>
+          <td class="k">Project Title</td><td class="v">${esc(v.projectTitle || p.name || '—')}</td>
+        </tr>
+        <tr>
+          <td class="k">Project Sponsor</td><td class="v">${esc(p.projectSponsor || '—')}</td>
+          <td class="k">Supply Chain Management</td><td class="v">${esc(v.supplyChainManagement || '—')}</td>
+        </tr>
+        <tr>
+          <td class="k">Sub Contractor</td><td class="v">${esc(v.subcontractorName || '—')}</td>
+          <td class="k">VOWD % Completion</td><td class="v">${vowdPctCompletion}%</td>
+        </tr>
+        ${v.approvedVoRef ? `<tr><td class="k">Approved Variation Orders Nos. *</td><td class="v" colspan="3">${esc(v.approvedVoRef)}</td></tr>` : ''}
+      </table>
+      <div style="font-size:.68rem;color:var(--muted);margin-top:4px;">* Over &amp; above the awarded contract value.</div>
+
+      <div class="section-label">B — Value Of Work Done (VOWD) Statement${v.asOfDate? ' as of '+fmtDate(v.asOfDate):''}</div>
+      <table class="vowd">
+        <thead><tr>
+          <th>Item Description</th>
+          <th class="num">Last Billed &amp; Certified Value</th>
+          <th class="num">Cum. Value of Work Done</th>
+        </tr></thead>
+        <tbody>
+          ${vowdRow('Value of Work Done (i)', lb.workDone, cum.workDone)}
+          ${vowdRow('Variations Claimed and Accepted (ii)', lb.variations, cum.variations)}
+          ${vowdRow('Materials at Site (iii)', lb.materials, cum.materials, 'Payable as per contract — only applicable to the Last Billed column')}
+          <tr class="total"><td class="label">VOWD Total = (i)+(ii)+(iii)</td><td class="num">${fmtOMR3(lb.vowdTotal)}</td><td class="num">${fmtOMR3(cum.vowdTotal)}</td></tr>
+          <tr><td class="label">VAT ${esc(v.vatPct)}%</td><td class="num">${fmtOMR3(lb.vat)}</td><td class="num">${fmtOMR3(cum.vat)}</td></tr>
+          ${vowdRow('Advance Paid', lb.advancePaid, cum.advancePaid)}
+          <tr class="total"><td class="label">Sub Total (A)</td><td class="num">${fmtOMR3(lb.subtotalA)}</td><td class="num">${fmtOMR3(cum.subtotalA)}</td></tr>
+          ${vowdRow('Less: Advance Recovered', lb.advanceRecovered, cum.advanceRecovered)}
+          ${vowdRow('Less: Retention Deduction', lb.retentionDeduction, cum.retentionDeduction)}
+          ${vowdRow('Less: Previously Certified', lb.previouslyCertified, cum.previouslyCertified)}
+          ${vowdRow('Less: Other Deductions (if any)', lb.otherDeductions, cum.otherDeductions)}
+          <tr class="total"><td class="label">Sub Total (B)</td><td class="num">${fmtOMR3(lb.subtotalB)}</td><td class="num">${fmtOMR3(cum.subtotalB)}</td></tr>
+          <tr class="net"><td class="label">Net Due = (A) − (B)</td><td class="num">${fmtOMR3(lb.netDue)}</td><td class="num">${fmtOMR3(cum.netDue)}</td></tr>
+        </tbody>
+      </table>
+
+      ${v.itemNotes ? `<div class="notes-block"><h4>Notes</h4><div class="body">${esc(v.itemNotes)}</div></div>` : ''}
+      ${v.retentionRemarks ? `<div class="remark-box"><b>Retention Released Remarks:</b> ${esc(v.retentionRemarks)}</div>` : ''}
+
+      <div class="sign-row">
+        ${ApprovalPrint.signBlock(ap, 'project_manager', 'Project Manager / Business Unit Head', v.generalManager)}
+        ${ApprovalPrint.signBlock(ap, 'supply_chain', 'Supply Chain Manager', v.supplyChainManagement)}
+        ${ApprovalPrint.signBlock(ap, 'director', 'Project Director / Executive Director', p.projectSponsor)}
+      </div>
+
+      <div class="footer-note">This is a computer-generated VOWD statement from the NEC Project Management Dashboard.</div>
+    </div>
+  `;
+  ApprovalPrint.mountBar(ap);
+}
+
+document.getElementById('printBtn').addEventListener('click', ()=> window.print());
+load();
+</script>
+</body>
+</html>

@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cost Statement</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Sora:wght@600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink:#0B2B3C; --muted:#5B6E77; --border:#E1E7EA; --surface:#F6F8F9;
+    --teal:#1B7A8C; --teal-dark:#0F4C5C; --navy:#1E355E; --sand:#C9A15A; --green:#2E8B57; --red:#C94C4C;
+  }
+  *{box-sizing:border-box;}
+  body{
+    font-family:'Inter',sans-serif; color:var(--ink); background:#DDE3E6; margin:0; padding:28px 0;
+    -webkit-font-smoothing:antialiased;
+  }
+  .toolbar{ max-width:900px; margin:0 auto 16px; display:flex; justify-content:space-between; align-items:center; padding:0 4px; }
+  .toolbar .hint{font-size:.82rem; color:#42535C;}
+  .btn{ border:none; border-radius:8px; padding:9px 18px; font-size:.86rem; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:7px; }
+  .btn-print{background:var(--navy); color:#fff;}
+  .btn-back{background:#fff; color:var(--ink); border:1px solid #C7D0D4; margin-right:8px;}
+
+  .sheet{ max-width:900px; margin:0 auto; background:#fff; padding:40px 44px; border-radius:6px; box-shadow:0 6px 24px rgba(11,43,60,.14); }
+  .head-row{display:flex; justify-content:space-between; align-items:flex-start; gap:20px; border-bottom:3px solid var(--navy); padding-bottom:16px;}
+  .head-left .name{font-family:'Sora',sans-serif; font-weight:800; font-size:1.2rem; color:var(--navy); max-width:460px;}
+  .head-left .bu-logo{max-height:40px; max-width:200px; object-fit:contain; margin-bottom:6px; display:block;}
+  .head-left .sub{font-size:.8rem; color:var(--muted); margin-top:3px;}
+  .head-right{text-align:right;}
+  .head-right .doc-title{font-family:'Sora',sans-serif; font-weight:800; font-size:1.3rem; letter-spacing:.4px; color:var(--ink);}
+  .head-right .doc-sub{font-size:.78rem; color:var(--muted); margin-top:2px;}
+
+  .meta-row{display:flex; justify-content:space-between; margin-top:14px; font-size:.8rem; color:var(--muted); flex-wrap:wrap; gap:8px;}
+  .meta-row b{color:var(--ink);}
+
+  .hint{margin-top:14px; font-size:.76rem; color:var(--muted); line-height:1.5; background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:10px 12px;}
+
+  table.cost{width:100%; border-collapse:collapse; font-size:.82rem; margin-top:16px;}
+  table.cost th{background:var(--navy); color:#fff; padding:8px 10px; text-align:left; font-size:.7rem; text-transform:uppercase; letter-spacing:.3px;}
+  table.cost th.num, table.cost td.num{text-align:right;}
+  table.cost td{border:1px solid var(--border); padding:7px 10px;}
+  table.cost tfoot td{background:var(--surface); font-weight:800; border-top:2px solid var(--border);}
+
+  .kpi-row{display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin-top:18px;}
+  .kpi-card{border:1px solid var(--border); border-radius:8px; padding:10px 12px;}
+  .kpi-card h5{font-size:.62rem; text-transform:uppercase; letter-spacing:.4px; color:var(--muted); margin:0 0 4px;}
+  .kpi-card div.val{font-size:1rem; font-weight:800; color:var(--ink);}
+
+  .footer-note{margin-top:30px; padding-top:12px; border-top:1px solid var(--border); font-size:.7rem; color:var(--muted); text-align:center;}
+
+  .loading, .error-state{max-width:900px; margin:60px auto; text-align:center; color:#42535C; font-size:.95rem;}
+
+  @media print{
+    body{background:#fff; padding:0;}
+    .toolbar{display:none;}
+    .sheet{box-shadow:none; border-radius:0; max-width:100%; padding:0 6mm; margin:0;}
+    table.cost th{ -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+    @page{ size:A4; margin:12mm 11mm; }
+  }
+</style>
+</head>
+<body>
+  <div class="toolbar">
+    <span class="hint">Review the cost statement below, then print or save as PDF using your browser's print dialog.</span>
+    <span>
+      <button class="btn btn-back" onclick="window.close()">Close</button>
+      <button class="btn btn-print" id="printBtn"><svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M2 4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v3H2V4zm1 5H2v3a1 1 0 0 0 1 1h1v2a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1v-2h1a1 1 0 0 0 1-1V9h-1M5 14v-3h6v3H5z"/></svg> Print / Save as PDF</button>
+    </span>
+  </div>
+  <div id="root"><div class="loading">Loading cost statement…</div></div>
+
+<script>
+const STAGES = [
+  'Mobilization', 'Design & Engineering', 'Procurement',
+  'Execution / Construction', 'Testing & Commissioning',
+  'Handover', 'Defects Liability', 'Closure'
+];
+const fmtCurrency = (v)=> 'OMR ' + (Number(v)||0).toLocaleString('en-US', {minimumFractionDigits:3, maximumFractionDigits:3});
+// DD/MM/YYYY. A plain ISO date ('YYYY-MM-DD') is read as a calendar date, with no timezone shift.
+const fmtDate = (s)=> { if(!s) return '—'; const iso = typeof s==='string' && s.match(/^(\d{4})-(\d{2})-(\d{2})$/); if(iso) return `${iso[3]}/${iso[2]}/${iso[1]}`; const d = new Date(s); return isNaN(d) ? '—' : `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()}`; };
+function esc(s){
+  return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+function varianceCellHTML(v){
+  const color = v < 0 ? 'var(--red)' : 'var(--green)';
+  const sign = v < 0 ? '−' : '+';
+  return `<td class="num" style="color:${color};font-weight:700;">${sign}${fmtCurrency(Math.abs(v))}</td>`;
+}
+
+async function load(){
+  const params = new URLSearchParams(window.location.search);
+  const id = params.get('id');
+  const root = document.getElementById('root');
+  if(!id){ root.innerHTML = '<div class="error-state">No project specified.</div>'; return; }
+  let p, vowdList;
+  try{
+    const r = await fetch(`/api/projects/${id}`);
+    if(!r.ok) throw new Error('Project not found');
+    p = await r.json();
+    vowdList = await (await fetch(`/api/projects/${id}/vowd-statements`)).json().catch(()=>[]);
+  }catch(e){
+    root.innerHTML = `<div class="error-state">Could not load this project's cost statement — ${e.message}.</div>`;
+    return;
+  }
+  document.title = `Cost Statement — ${p.name}`;
+
+  // Same per-stage Budget/Committed/Actual apportionment as the live Cost Statement tab:
+  // Committed = every planned material amount + all crew allocations at Planned Qty;
+  // Actual = consumed material amount + crew cost at Actual Qty;
+  // Budget = Approved Budget apportioned across stages in proportion to Committed cost share.
+  const byStage = {};
+  STAGES.forEach(s=> byStage[s] = { committed:0, actual:0 });
+  (p.materials||[]).forEach(m=>{
+    if(!byStage[m.stage]) byStage[m.stage] = { committed:0, actual:0 };
+    byStage[m.stage].committed += m.plannedAmount;
+    byStage[m.stage].actual += m.actualAmount;
+  });
+  (p.crews||[]).forEach(c=>{
+    if(!byStage[c.stage]) byStage[c.stage] = { committed:0, actual:0 };
+    byStage[c.stage].committed += c.cost;
+    byStage[c.stage].actual += c.actualCost;
+  });
+  const totalCommitted = Object.values(byStage).reduce((s,d)=> s+d.committed, 0);
+  const approvedBudget = Number(p.approvedBudget)||0;
+  let gBudget=0, gCommitted=0, gActual=0;
+  const rows = Object.keys(byStage).map(s=>{
+    const d = byStage[s];
+    const budget = totalCommitted>0 ? approvedBudget*(d.committed/totalCommitted) : 0;
+    gBudget+=budget; gCommitted+=d.committed; gActual+=d.actual;
+    return { stage:s, budget, committed:d.committed, actual:d.actual };
+  }).filter(r=> r.committed || r.actual || STAGES.includes(r.stage));
+
+  // Each sub contractor has its own chain of statements: the project's cumulative VOWD is the sum of the latest one of each chain.
+  const latestPerSub = new Map();
+  (vowdList||[]).forEach(v=>{ const k = v.subcontractorId||0; if(!latestPerSub.has(k)) latestPerSub.set(k, v); });
+  const cumVowdDisplay = latestPerSub.size ? fmtCurrency([...latestPerSub.values()].reduce((s,v)=> s + v.cumulative.vowdTotal, 0)) : 'No VOWD statement yet';
+  const utilization = approvedBudget ? ((gActual/approvedBudget)*100).toFixed(1) : '0.0';
+  const committedUtilization = gCommitted ? ((gActual/gCommitted)*100).toFixed(1) : '0.0';
+
+  root.innerHTML = `
+    <div class="sheet">
+      <div class="head-row">
+        <div class="head-left">
+          ${p.businessUnitLogoUrl ? `<img class="bu-logo" src="${esc(p.businessUnitLogoUrl)}" alt="${esc(p.businessUnit || '')}">` : ''}
+          <div class="name">${esc(p.name)}</div>
+          <div class="sub">${esc(p.code)} · ${esc(p.governorate||'')}${p.city? ' ('+esc(p.city)+')':''}</div>
+        </div>
+        <div class="head-right">
+          <div class="doc-title">COST STATEMENT</div>
+          <div class="doc-sub">As of ${fmtDate(new Date().toISOString())}</div>
+        </div>
+      </div>
+
+      <div class="meta-row">
+        <div>Contractor: <b>${esc(p.contractor || '—')}</b></div>
+        <div>Approved Budget: <b>${fmtCurrency(approvedBudget)}</b></div>
+        <div>Budget Utilization: <b>${utilization}%</b></div>
+        <div>Committed Utilization: <b>${committedUtilization}%</b></div>
+      </div>
+
+      <div class="hint">Committed = every planned material amount + all crew allocations at Planned Qty. Actual = consumed material amount + crew cost at Actual Qty. Budget is the Approved Budget apportioned across stages in proportion to their share of Committed cost — so the Budget column always sums back to the Approved Budget. Variance = Budget − Actual (green = under budget, red = over). Budget Utilization = Actual ÷ Approved Budget; Committed Utilization = Actual ÷ Committed.</div>
+
+      <table class="cost">
+        <thead><tr>
+          <th>Stage</th>
+          <th class="num">Budget</th><th class="num">Committed</th><th class="num">Actual</th><th class="num">Variance</th>
+        </tr></thead>
+        <tbody>
+          ${rows.map(r=>`<tr>
+            <td>${esc(r.stage)}</td>
+            <td class="num">${fmtCurrency(r.budget)}</td><td class="num">${fmtCurrency(r.committed)}</td><td class="num">${fmtCurrency(r.actual)}</td>
+            ${varianceCellHTML(r.budget - r.actual)}
+          </tr>`).join('')}
+        </tbody>
+        <tfoot>
+          <tr>
+            <td>Total</td>
+            <td class="num">${fmtCurrency(gBudget)}</td><td class="num">${fmtCurrency(gCommitted)}</td><td class="num">${fmtCurrency(gActual)}</td>
+            ${varianceCellHTML(gBudget - gActual)}
+          </tr>
+        </tfoot>
+      </table>
+
+      <div class="kpi-row">
+        <div class="kpi-card"><h5>Approved Budget</h5><div class="val">${fmtCurrency(approvedBudget)}</div></div>
+        <div class="kpi-card"><h5>Committed Cost</h5><div class="val">${fmtCurrency(gCommitted)}</div></div>
+        <div class="kpi-card"><h5>Actual Cost</h5><div class="val">${fmtCurrency(gActual)}</div></div>
+        <div class="kpi-card"><h5>Cumulative VOWD (latest)</h5><div class="val" style="font-size:.86rem;">${cumVowdDisplay}</div></div>
+      </div>
+
+      <div class="footer-note">This is a computer-generated cost statement from the NEC Project Management Dashboard.</div>
+    </div>
+  `;
+}
+
+document.getElementById('printBtn').addEventListener('click', ()=> window.print());
+load();
+</script>
+</body>
+</html>
