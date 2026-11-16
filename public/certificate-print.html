@@ -195,9 +195,9 @@ async function load(){
       ${c.remarks ? `<div class="notes-block"><h4>Remarks</h4><div class="body">${esc(c.remarks)}</div></div>` : ''}
 
       <div class="sign-row">
-        ${ApprovalPrint.signBlock(ap, 'engineer', c.engineerName, c.engineerTitle)}
-        ${ApprovalPrint.signBlock(ap, 'supply_chain', c.contractorRepName, c.contractorRepTitle)}
-        ${ApprovalPrint.signBlock(ap, 'client_rep', c.clientRepName, c.clientRepTitle)}
+        ${ApprovalPrint.signBlock(ap, 'engineer', c.engineerName, c.engineerTitle, 'Prepared By')}
+        ${ApprovalPrint.signBlock(ap, 'supply_chain', c.contractorRepName, c.contractorRepTitle, 'Reviewed By')}
+        ${ApprovalPrint.signBlock(ap, 'client_rep', c.clientRepName, c.clientRepTitle, 'Approved By')}
       </div>
 
       <div class="footer-note">This is a computer-generated completion certificate from the NEC Project Management Dashboard.</div>

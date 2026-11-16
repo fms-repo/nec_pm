@@ -208,9 +208,9 @@ async function load(){
       ${v.retentionRemarks ? `<div class="remark-box"><b>Retention Released Remarks:</b> ${esc(v.retentionRemarks)}</div>` : ''}
 
       <div class="sign-row">
-        ${ApprovalPrint.signBlock(ap, 'project_manager', v.generalManager)}
-        ${ApprovalPrint.signBlock(ap, 'supply_chain', v.supplyChainManagement)}
-        ${ApprovalPrint.signBlock(ap, 'director', p.projectSponsor)}
+        ${ApprovalPrint.signBlock(ap, 'project_manager', v.generalManager, '', 'Prepared By')}
+        ${ApprovalPrint.signBlock(ap, 'supply_chain', v.supplyChainManagement, '', 'Reviewed By')}
+        ${ApprovalPrint.signBlock(ap, 'director', p.projectSponsor, '', 'Approved By')}
       </div>
 
       <div class="footer-note">This is a computer-generated VOWD statement from the NEC Project Management Dashboard.</div>

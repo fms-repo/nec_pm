@@ -24,27 +24,27 @@ const DOC_TYPES = {
     table: 'vowd_statements', label: 'VOWD Statement', numberCol: 'vowd_number', print: id => `/vowd-print.html?id=${id}`,
     titleSql: 'COALESCE(d.contractor_name, d.project_title)',
     roles: [
-      { key: 'project_manager', label: 'Project Manager / Business Unit Head' },
-      { key: 'supply_chain', label: 'Supply Chain Manager' },
-      { key: 'director', label: 'Project Director / Executive Director' }
+      { key: 'project_manager', label: 'Prepared By' },
+      { key: 'supply_chain', label: 'Reviewed By' },
+      { key: 'director', label: 'Approved By' }
     ]
   },
   change_request: {
     table: 'change_requests', label: 'Change Request', numberCol: 'cr_code', print: id => `/change-request-print.html?id=${id}`,
     titleSql: 'd.description',
     roles: [
-      { key: 'submitter', label: 'Project Engineer / Business Unit' },
-      { key: 'reviewer', label: 'Reviewed By – Project Manager / Supply Chain Manager' },
-      { key: 'ccb', label: 'Change Control Board / CEO' }
+      { key: 'submitter', label: 'Prepared By' },
+      { key: 'reviewer', label: 'Reviewed By' },
+      { key: 'ccb', label: 'Approved By' }
     ]
   },
   certificate: {
     table: 'completion_certificates', label: 'Completion Certificate', numberCol: 'certificate_number', print: id => `/certificate-print.html?id=${id}`,
     titleSql: "d.certificate_type || ' certificate'",
     roles: [
-      { key: 'engineer', label: 'Engineer / Consultant' },
-      { key: 'supply_chain', label: 'Supply Chain Manager' },
-      { key: 'client_rep', label: 'Client Representative' }
+      { key: 'engineer', label: 'Prepared By' },
+      { key: 'supply_chain', label: 'Reviewed By' },
+      { key: 'client_rep', label: 'Approved By' }
     ]
   }
 };

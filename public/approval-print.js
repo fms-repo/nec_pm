@@ -9,6 +9,8 @@
     .sign-block .line{padding-top:0 !important;}
     .sign-block .who{margin-top:6px !important; font-size:.84rem; line-height:1.3;}
     .sign-block .title{font-size:.74rem; color:#5B6E77; margin-top:1px; line-height:1.3;}
+    .sign-block .role-label{font-size:.78rem; font-weight:700; letter-spacing:.3px; margin-top:6px;}
+    .sign-block .role-label + .who{margin-top:2px !important;}
     .sign-block .who.blank{font-weight:400; font-size:.72rem; color:#9AA8AF; font-style:italic;}
     .sig-stamp{font-size:.68rem; line-height:1.35; padding:3px 8px; border-radius:6px; border:1px solid; -webkit-print-color-adjust:exact; print-color-adjust:exact;}
     .sig-stamp.ok{color:#1E7A4D; border-color:#1E7A4D; background:#EAF6EF;}
@@ -62,8 +64,9 @@
   // One signature block: the signature line with the person's name and designation under it, nothing else.
   // The person is the approver assigned through the workflow (name and designation from Team Members);
   // the typed-in name is only a fallback for a document nobody has been assigned to yet. The signature
-  // role ("Supply Chain Manager" etc.) is deliberately not printed.
-  function signBlock(state, key, fallbackName, fallbackTitle){
+  // role ("Supply Chain Manager" etc.) is not printed unless the document passes a roleText
+  // (the VOWD does: "Prepared By" / "Reviewed By" / "Approved By"), shown between the signature line and the name.
+  function signBlock(state, key, fallbackName, fallbackTitle, roleText){
     const step = state && state.byRole[key];
     const known = step ? null : designations[norm(fallbackName)];
     const name = step ? step.name : (known ? known.name : fallbackName);
@@ -77,7 +80,8 @@
     const who = name
       ? `<div class="who">${escape(name)}</div>${title ? `<div class="title">${escape(title)}</div>` : ''}`
       : '<div class="who blank">Name &amp; designation</div>';
-    return `<div class="sign-block"><div class="sig-space">${st}</div><div class="line"></div>${who}</div>`;
+    const role = roleText ? `<div class="role-label">${escape(roleText)}</div>` : '';
+    return `<div class="sign-block"><div class="sig-space">${st}</div><div class="line"></div>${role}${who}</div>`;
   }
 
   // Approve / Reject bar for the person whose turn it is; a short status line for everyone else.
