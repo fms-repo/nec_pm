@@ -537,7 +537,7 @@ function serializeCrew(row) {
   return {
     id: row.id, projectId: row.project_id, eventId: row.event_id, stage: row.stage,
     resourceType: row.resource_type, resourceName: row.resource_name,
-    contractorId: row.contractor_id, contractor: row.contractor_name || null,
+    contractorId: row.contractor_id, contractor: row.contractor_name || null, poRef: row.po_ref || '',
     quantity: row.quantity, actualQty: row.actual_qty || 0,
     rateBasis: row.rate_basis, unitRate: row.unit_rate, allocatedDays: row.allocated_days,
     startDate: row.start_date, endDate: row.end_date, status: row.status, notes: row.notes,
@@ -1097,6 +1097,7 @@ function sanitizeCrewRows(rows) {
       resource_type: pickEnum(r.resourceType, RESOURCE_TYPES, RESOURCE_TYPES[0]),
       resource_name: String(r.resourceName).trim(),
       contractor_id: r.contractorId || null,
+      po_ref: (typeof r.poRef === 'string' && r.poRef.trim().slice(0, 200)) || null,
       quantity: Number(r.quantity) || 0,
       actual_qty: Number(r.actualQty) || 0,
       rate_basis: pickEnum(r.rateBasis, RATE_BASES, RATE_BASES[0]),
@@ -1182,8 +1183,8 @@ const insertMaterialStmt = db.prepare(`INSERT INTO project_materials
   (project_id, event_id, stage, material_name, specification, unit, planned_qty, consumed_qty, unit_rate, supplier, delivery_date, status, notes)
   VALUES (@project_id, @event_id, @stage, @material_name, @specification, @unit, @planned_qty, @consumed_qty, @unit_rate, @supplier, @delivery_date, @status, @notes)`);
 const insertCrewStmt = db.prepare(`INSERT INTO project_crews
-  (project_id, event_id, stage, resource_type, resource_name, contractor_id, quantity, actual_qty, rate_basis, unit_rate, allocated_days, start_date, end_date, status, notes)
-  VALUES (@project_id, @event_id, @stage, @resource_type, @resource_name, @contractor_id, @quantity, @actual_qty, @rate_basis, @unit_rate, @allocated_days, @start_date, @end_date, @status, @notes)`);
+  (project_id, event_id, stage, resource_type, resource_name, contractor_id, po_ref, quantity, actual_qty, rate_basis, unit_rate, allocated_days, start_date, end_date, status, notes)
+  VALUES (@project_id, @event_id, @stage, @resource_type, @resource_name, @contractor_id, @po_ref, @quantity, @actual_qty, @rate_basis, @unit_rate, @allocated_days, @start_date, @end_date, @status, @notes)`);
 const insertEventStmt = db.prepare(`INSERT INTO project_events
   (project_id, seq_no, stage, event_name, planned_start, planned_end, actual_start, actual_end, status, assigned_to, progress_pct, is_collapsed, remarks)
   VALUES (@project_id, @seq_no, @stage, @event_name, @planned_start, @planned_end, @actual_start, @actual_end, @status, @assigned_to, @progress_pct, @is_collapsed, @remarks)`);
@@ -1406,7 +1407,7 @@ const COMBINED_HEADERS = [
   ['Actual Start (DD/MM/YYYY)', 20], ['Actual End (DD/MM/YYYY)', 20], ['Assigned To', 18], ['Progress %', 11],
   ['Event Seq No', 13], ['Planned Qty', 12], ['Consumed / Actual Qty', 18], ['Unit Rate (OMR)', 14],
   ['Specification', 22], ['Material Unit', 12], ['Supplier', 20], ['Delivery Date (DD/MM/YYYY)', 20],
-  ['Resource Type', 16], ['Rate Basis', 14], ['Days', 8], ['Subcontractor', 24],
+  ['Resource Type', 16], ['Rate Basis', 14], ['Days', 8], ['Subcontractor', 24], ['PO Reference No', 20],
   ['Notes', 30]
 ];
 // Column groups for the banner row above the headers (1-indexed, inclusive) — purely visual,
@@ -1416,8 +1417,8 @@ const COMBINED_GROUPS = [
   { from: 5, to: 11, label: 'EVENT ROWS ONLY', color: 'FF1B7A8C' },
   { from: 12, to: 15, label: 'MATERIAL & CREW/LABOR ROWS', color: 'FFC9A15A' },
   { from: 16, to: 19, label: 'MATERIAL ROWS ONLY', color: 'FFDCC08C' },
-  { from: 20, to: 23, label: 'CREW / LABOR ROWS ONLY', color: 'FFC94C4C' },
-  { from: 24, to: 24, label: 'ALL ROW TYPES', color: 'FF0F4C5C' }
+  { from: 20, to: 24, label: 'CREW / LABOR ROWS ONLY', color: 'FFC94C4C' },
+  { from: 25, to: 25, label: 'ALL ROW TYPES', color: 'FF0F4C5C' }
 ];
 const importUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
 
@@ -1520,6 +1521,8 @@ function buildCombinedEventsWorkbook(dataRows, contractorNames = []) {
     ['Valid Rate Basis values — Crew / Labor rows only'], ...RATE_BASES.map(s => [s]), [''],
     ['Subcontractor — Crew / Labor rows only'],
     ['Pick the subcontractor doing this crew / labour line from the dropdown (list in column C of this sheet). To add a new one, just type its name: on upload the app asks whether to add it to the Contractors list. Every subcontractor used is also added to the project\'s Sub Contractors list.'], [''],
+    ['PO Reference No — Crew / Labor rows only'],
+    ['The subcontractor\'s purchase order reference for this line (free text, optional). The VOWD statement offers each distinct PO reference of the project as a dropdown, and carries Last Billed & Certified Value forward per PO.'], [''],
     ['Notes'],
     ['Dates must be entered as DD/MM/YYYY.'],
     ['Seq No controls the order of the Sequence of Events — leave blank to auto-number by row order.'],
@@ -1544,9 +1547,9 @@ app.get('/api/events/template', async (req, res) => {
   // One example of each Row Type, sharing a Stage and Event Seq No so the Material/Crew rows
   // visibly link to the example Event.
   const exampleRows = [
-    ['Event', STAGES[0], 'Mobilize site & set up compound', EVENT_STATUSES[0], 1, '01/01/2026', '15/01/2026', '', '', '', 0, '', '', '', '', '', '', '', '', '', '', '', '', ''],
-    ['Material', STAGES[0], 'DI Pipe 300mm', MATERIAL_STATUSES[0], '', '', '', '', '', '', '', 1, 500, 0, 45, 'Class K9', 'm', '', '', '', '', '', '', ''],
-    ['Crew / Labor', STAGES[0], 'Pipe Laying Crew', CREW_STATUSES[0], '', '', '', '', '', '', '', 1, 1, 0, 80, '', '', '', '', RESOURCE_TYPES[0], RATE_BASES[0], 10, '', '']
+    ['Event', STAGES[0], 'Mobilize site & set up compound', EVENT_STATUSES[0], 1, '01/01/2026', '15/01/2026', '', '', '', 0, '', '', '', '', '', '', '', '', '', '', '', '', '', ''],
+    ['Material', STAGES[0], 'DI Pipe 300mm', MATERIAL_STATUSES[0], '', '', '', '', '', '', '', 1, 500, 0, 45, 'Class K9', 'm', '', '', '', '', '', '', '', ''],
+    ['Crew / Labor', STAGES[0], 'Pipe Laying Crew', CREW_STATUSES[0], '', '', '', '', '', '', '', 1, 1, 0, 80, '', '', '', '', RESOURCE_TYPES[0], RATE_BASES[0], 10, '', '', '']
   ];
   const wb = buildCombinedEventsWorkbook(exampleRows, await contractorNameList());
   const buf = await wb.xlsx.writeBuffer();
@@ -1565,18 +1568,18 @@ function eventExportRow(ev) {
   return ['Event', ev.stage, ev.eventName, ev.status, ev.seqNo,
     dmyFromIso(ev.plannedStart), dmyFromIso(ev.plannedEnd), dmyFromIso(ev.actualStart), dmyFromIso(ev.actualEnd),
     ev.assignedTo || '', ev.progressPct ?? 0,
-    '', '', '', '', '', '', '', '', '', '', '', '', ev.remarks || ''];
+    '', '', '', '', '', '', '', '', '', '', '', '', '', ev.remarks || ''];
 }
 function materialExportRow(m, eventSeqNo) {
   return ['Material', m.stage, m.materialName, m.status, '', '', '', '', '', '', '',
     eventSeqNo ?? '', m.plannedQty || 0, m.consumedQty || 0, m.unitRate || 0,
     m.specification || '', m.unit || '', m.supplier || '', dmyFromIso(m.deliveryDate),
-    '', '', '', '', m.notes || ''];
+    '', '', '', '', '', m.notes || ''];
 }
 function crewExportRow(c, eventSeqNo) {
   return ['Crew / Labor', c.stage, c.resourceName, c.status, '', '', '', '', '', '', '',
     eventSeqNo ?? '', c.quantity || 0, c.actualQty || 0, c.unitRate || 0,
-    '', '', '', '', c.resourceType || '', c.rateBasis || '', c.allocatedDays || 0, c.contractor || '', c.notes || ''];
+    '', '', '', '', c.resourceType || '', c.rateBasis || '', c.allocatedDays || 0, c.contractor || '', c.poRef || '', c.notes || ''];
 }
 // One row per Event (in Sequence order), immediately followed by its own Materials then Crew /
 // Labor lines — mirroring how they nest under that event in the app. Materials/Crew not tied to
@@ -1893,6 +1896,7 @@ function parseCombinedEventsSheet(sheet) {
         unitRate: Number(get('Unit Rate')) || 0,
         allocatedDays: Number(get('Days')) || 0,
         contractorName: String(get('Subcontractor') || '').trim() || null,
+        poRef: String(get('PO Ref') || '').trim().slice(0, 200),
         status,
         notes: String(get('Notes') || '').trim() || null
       });
@@ -2910,13 +2914,19 @@ async function serializeVowd(row) {
 // project's first VOWD statement, otherwise it's carried forward from the immediately
 // preceding statement's Cumulative column — so it's derived here from the DB, not
 // trusted from the request body, regardless of what the client sent.
-// "Previous" means the previous statement of the SAME sub contractor on this project (statements with no sub
-// contractor chain among themselves), so each sub contractor has its own running Last Billed & Certified value.
-async function vowdPreviousStatement(projectId, beforeId, subcontractorId) {
+// "Previous" means the previous statement in the SAME chain on this project. The chain is the sub contractor's PO
+// reference when the statement has one (matched ignoring case and surrounding spaces — whichever sub contractor it
+// names), so every PO has its own running Last Billed & Certified value. A statement with no PO keeps the older
+// rule: it chains with the other no-PO statements of the same sub contractor (no sub contractor chain together).
+async function vowdPreviousStatement(projectId, beforeId, subcontractorId, poRef) {
+  const po = typeof poRef === 'string' ? poRef.trim().toLowerCase() : '';
   const sub = Number(subcontractorId) || null;
+  const chain = po
+    ? { sql: "AND LOWER(TRIM(COALESCE(subcontractor_po_ref, ''))) = ?", param: po }
+    : { sql: "AND TRIM(COALESCE(subcontractor_po_ref, '')) = '' AND subcontractor_id IS NOT DISTINCT FROM ?", param: sub };
   return beforeId
-    ? await db.prepare('SELECT * FROM vowd_statements WHERE project_id = ? AND id < ? AND deleted_at IS NULL AND subcontractor_id IS NOT DISTINCT FROM ? ORDER BY id DESC LIMIT 1').get(projectId, beforeId, sub)
-    : await db.prepare('SELECT * FROM vowd_statements WHERE project_id = ? AND deleted_at IS NULL AND subcontractor_id IS NOT DISTINCT FROM ? ORDER BY id DESC LIMIT 1').get(projectId, sub);
+    ? await db.prepare(`SELECT * FROM vowd_statements WHERE project_id = ? AND id < ? AND deleted_at IS NULL ${chain.sql} ORDER BY id DESC LIMIT 1`).get(projectId, beforeId, chain.param)
+    : await db.prepare(`SELECT * FROM vowd_statements WHERE project_id = ? AND deleted_at IS NULL ${chain.sql} ORDER BY id DESC LIMIT 1`).get(projectId, chain.param);
 }
 function vowdLbCarryForward(previous) {
   if (!previous) {
@@ -3017,7 +3027,7 @@ app.post('/api/projects/:id/vowd-statements', async (req, res) => {
     await db.lock('vowd-number');
     // Read the previous statement inside the lock, so its Cumulative column is carried forward
     // even when two statements for the same project are created at the same moment.
-    const previous = await vowdPreviousStatement(project.id, null, req.body.subcontractorId);
+    const previous = await vowdPreviousStatement(project.id, null, req.body.subcontractorId, req.body.subcontractorPoRef);
     const fields = vowdWriteFields(req.body, null, previous);
     const cols = Object.keys(fields);
     const info = await db.prepare(`INSERT INTO vowd_statements
@@ -3043,7 +3053,7 @@ app.put('/api/vowd-statements/:id', async (req, res) => {
   if (!existing) return res.status(404).json({ error: 'VOWD statement not found' });
   const vowdIssue = vowdActualsProblem(req.body);
   if (vowdIssue) return res.status(400).json({ error: vowdIssue + '.', code: 'ACTUAL_EXCEEDS_PLANNED' });
-  const previous = await vowdPreviousStatement(existing.project_id, existing.id, req.body.subcontractorId);
+  const previous = await vowdPreviousStatement(existing.project_id, existing.id, req.body.subcontractorId, req.body.subcontractorPoRef);
   const fields = vowdWriteFields(req.body, existing, previous);
   const setClause = Object.keys(fields).map(c => `${c} = @${c}`).join(', ');
   await db.prepare(`UPDATE vowd_statements SET ${setClause}, updated_at = utc_now_text() WHERE id = @id`)

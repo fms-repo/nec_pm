@@ -131,9 +131,9 @@ async function load(){
     return { stage:s, budget, committed:d.committed, actual:d.actual };
   }).filter(r=> r.committed || r.actual || STAGES.includes(r.stage));
 
-  // Each sub contractor has its own chain of statements: the project's cumulative VOWD is the sum of the latest one of each chain.
+  // Each PO (or, with no PO, each sub contractor) has its own chain of statements: the project's cumulative VOWD is the sum of the latest one of each chain.
   const latestPerSub = new Map();
-  (vowdList||[]).forEach(v=>{ const k = v.subcontractorId||0; if(!latestPerSub.has(k)) latestPerSub.set(k, v); });
+  (vowdList||[]).forEach(v=>{ const po = String(v.subcontractorPoRef||'').trim().toLowerCase(); const k = po ? 'po:'+po : 'sub:'+(v.subcontractorId||0); if(!latestPerSub.has(k)) latestPerSub.set(k, v); });
   const cumVowdDisplay = latestPerSub.size ? fmtCurrency([...latestPerSub.values()].reduce((s,v)=> s + v.cumulative.vowdTotal, 0)) : 'No VOWD statement yet';
   const utilization = approvedBudget ? ((gActual/approvedBudget)*100).toFixed(1) : '0.0';
   const committedUtilization = gCommitted ? ((gActual/gCommitted)*100).toFixed(1) : '0.0';

@@ -5057,6 +5057,7 @@ function crewRowHTML(c={}){
     <td><select class="form-select crew-type">${RESOURCE_TYPES.map(t=>`<option ${c.resourceType===t?'selected':''}>${t}</option>`).join('')}</select></td>
     <td><input class="form-control col-name crew-name" value="${c.resourceName||''}" placeholder="e.g. Pipe Laying Crew"></td>
     <td><select class="form-select crew-contractor">${contractorOptions}</select></td>
+    <td><input class="form-control col-name crew-po" maxlength="200" value="${esc(c.poRef||'')}" placeholder="PO ref no." title="Sub contractor PO reference number"></td>
     <td><input type="number" step="1" class="form-control col-narrow crew-qty" value="${c.quantity??1}"></td>
     <td class="actual-cell"><div class="actual-wrap"><input type="number" step="0.01" class="form-control col-narrow crew-actual-qty" value="${c.actualQty??0}">${actualLogButtonHTML(c)}</div></td>
     <td><select class="form-select crew-basis">${RATE_BASES.map(r=>`<option ${c.rateBasis===r?'selected':''}>${r}</option>`).join('')}</select></td>
@@ -5139,10 +5140,10 @@ function crewsMiniTableHTML(rows){
       </div>
     </div>
     <div class="pf-line-table-wrap"><table class="dash-table pf-line-table">
-      <thead><tr><th style="width:24px;"><input type="checkbox" class="crew-select-all" title="Select all"></th><th>Stage</th><th>Type</th><th>Resource / Role</th><th>Contractor</th><th>Planned Qty</th><th>Actual Qty</th><th>Rate Basis</th><th>Unit Rate (OMR)</th><th>Days</th><th>Planned Value (OMR)</th><th>Actual Value (OMR)</th><th>Status</th><th></th></tr></thead>
+      <thead><tr><th style="width:24px;"><input type="checkbox" class="crew-select-all" title="Select all"></th><th>Stage</th><th>Type</th><th>Resource / Role</th><th>Contractor</th><th>PO Ref No.</th><th>Planned Qty</th><th>Actual Qty</th><th>Rate Basis</th><th>Unit Rate (OMR)</th><th>Days</th><th>Planned Value (OMR)</th><th>Actual Value (OMR)</th><th>Status</th><th></th></tr></thead>
       <tbody class="evt-crews-body">${rows.map(crewRowHTML).join('')}</tbody>
       <tfoot><tr style="font-weight:700;background:var(--surface);">
-        <td colspan="10" style="text-align:right;">Total</td>
+        <td colspan="11" style="text-align:right;">Total</td>
         <td data-total-for="crew-value">${fmtCurrency(total)}</td>
         <td data-total-for="crew-value-actual">${fmtCurrency(totalActual)}</td>
         <td colspan="2"></td>
@@ -5277,7 +5278,7 @@ function refreshEventAssigneeOptions(){
 const FILL_DOWN_FIELDS = [
   'evt-stage','evt-name','evt-pstart','evt-pend','evt-astart','evt-aend','evt-status','evt-assigned','evt-progress','evt-remarks',
   'mat-stage','mat-name','mat-spec','mat-unit','mat-planned','mat-consumed','mat-rate','mat-supplier','mat-delivery','mat-status',
-  'crew-stage','crew-type','crew-name','crew-contractor','crew-qty','crew-actual-qty','crew-basis','crew-rate','crew-days','crew-status'
+  'crew-stage','crew-type','crew-name','crew-contractor','crew-po','crew-qty','crew-actual-qty','crew-basis','crew-rate','crew-days','crew-status'
 ];
 function fillDownFieldIn(td){
   // The field must belong to this cell itself, not to a nested Materials/Crew table inside it.
@@ -6348,6 +6349,7 @@ function readCrewRow(tr){
     resourceType: tr.querySelector('.crew-type').value,
     resourceName: tr.querySelector('.crew-name').value.trim(),
     contractorId: tr.querySelector('.crew-contractor').value ? Number(tr.querySelector('.crew-contractor').value) : null,
+    poRef: tr.querySelector('.crew-po').value.trim(),
     quantity: Number(tr.querySelector('.crew-qty').value)||0,
     actualQty: Number(tr.querySelector('.crew-actual-qty').value)||0,
     rateBasis: tr.querySelector('.crew-basis').value,
@@ -6427,9 +6429,9 @@ function renderCostStatementPreview(){
     </tr>`;
   }).join('');
 
-  // Each sub contractor has its own chain of statements, so the project's cumulative VOWD is the sum of the latest one of each chain.
+  // Each PO (or, with no PO, each sub contractor) has its own chain of statements, so the project's cumulative VOWD is the sum of the latest one of each chain.
   const latestPerSub = new Map();
-  (pfVowdForProject||[]).forEach(v=>{ const k = v.subcontractorId||0; if(!latestPerSub.has(k)) latestPerSub.set(k, v); });
+  (pfVowdForProject||[]).forEach(v=>{ const k = vowdChainKey(v); if(!latestPerSub.has(k)) latestPerSub.set(k, v); });
   const cumVowdDisplay = latestPerSub.size ? fmtCurrency([...latestPerSub.values()].reduce((s,v)=> s + v.cumulative.vowdTotal, 0)) : 'No VOWD statement yet';
   document.getElementById('pfCostTableFoot').innerHTML = `<tr>
     <td>Total</td>
@@ -8263,17 +8265,41 @@ function vowdLbCarryForwardClient(previous){
     lbAdvanceRecovered:c.advanceRecovered, lbRetentionDeduction:c.retentionDeduction, lbPreviouslyCertified:c.previouslyCertified, lbOtherDeductions:c.otherDeductions
   };
 }
-// The previous statement is the previous one of the SAME sub contractor (statements with no sub contractor chain
-// among themselves) — so each sub contractor has its own running Last Billed & Certified value. beforeId limits it
-// to statements older than the one being edited. pfVowdForProject is newest first.
-function vowdPreviousFor(subId, beforeId){
-  const want = subId || null;
-  return (pfVowdForProject||[]).find(v=> (v.subcontractorId||null)===want && (!beforeId || v.id<beforeId)) || null;
+// The previous statement is the previous one of the SAME chain: the PO reference when one is chosen (ignoring case and
+// surrounding spaces, whichever sub contractor it names) — so each PO has its own running Last Billed & Certified value.
+// With no PO the older rule applies: the no-PO statements of the same sub contractor chain together. Mirrors the server
+// (vowdPreviousStatement). beforeId limits it to statements older than the one being edited. pfVowdForProject is newest first.
+const vowdPoKey = po => String(po||'').trim().toLowerCase();
+function vowdChainKey(v){
+  const po = vowdPoKey(v.subcontractorPoRef);
+  return po ? 'po:'+po : 'sub:'+(v.subcontractorId||0);
 }
-// Carries the previous statement of the chosen sub contractor into the draft: Last Billed column + its reference, and —
-// for a NEW statement, and only where the user has not typed their own figure — variation order / VAT defaults.
+function vowdPreviousFor(subId, beforeId, po){
+  const want = vowdPoKey(po);
+  return (pfVowdForProject||[]).find(v=>{
+    if(beforeId && v.id>=beforeId) return false;
+    const vp = vowdPoKey(v.subcontractorPoRef);
+    return want ? vp===want : (!vp && (v.subcontractorId||null)===(subId||null));
+  }) || null;
+}
+// The distinct PO reference numbers typed on the Crew / Labour lines of the Sequence of Events (read live from the form,
+// so unsaved edits count), one entry per PO — "po-1" and " PO-1 " are the same PO. With a sub contractor chosen, only its
+// own lines' POs (plus lines that name no contractor) are offered. subIds = the sub contractors whose lines use that PO.
+function vowdPoOptions(subId){
+  const seen = new Map();
+  readCrewRows().forEach(c=>{
+    const po = (c.poRef||'').trim(); if(!po) return;
+    if(subId && c.contractorId && c.contractorId!==subId) return;
+    const k = vowdPoKey(po);
+    if(!seen.has(k)) seen.set(k, {po, subIds:new Set()});
+    if(c.contractorId) seen.get(k).subIds.add(c.contractorId);
+  });
+  return [...seen.values()].sort((x,y)=> x.po.localeCompare(y.po, undefined, {numeric:true}));
+}
+// Carries the previous statement of the chosen PO into the draft: Last Billed column + its reference, and — for a NEW
+// statement, and only where the user has not typed their own figure — variation order / VAT defaults.
 function applyVowdSubcontractor(d){
-  const previous = vowdPreviousFor(d.subcontractorId, d.id);
+  const previous = vowdPreviousFor(d.subcontractorId, d.id, d.subcontractorPoRef);
   Object.assign(d, vowdLbCarryForwardClient(previous));
   d.lastBilledRef = previous ? previous.vowdNumber : '';
   if(!d.id){
@@ -8281,13 +8307,11 @@ function applyVowdSubcontractor(d){
     const next = {
       vo: previous ? previous.variationOrderValue : 0,
       voRef: previous ? (previous.approvedVoRef||'') : '',
-      vat: previous ? previous.vatPct : 5,
-      po: previous ? (previous.subcontractorPoRef||'') : ''
+      vat: previous ? previous.vatPct : 5
     };
     if(d.variationOrderValue===a.vo) d.variationOrderValue = next.vo;
     if((d.approvedVoRef||'')===a.voRef) d.approvedVoRef = next.voRef;
     if(d.vatPct===a.vat) d.vatPct = next.vat;
-    if((d.subcontractorPoRef||'')===(a.po||'')) d.subcontractorPoRef = next.po; // a PO ref the user typed is kept
     d._auto = next;
   }
   return previous;
@@ -8296,20 +8320,20 @@ function defaultVowdDraft(){
   const p = pfCurrentProject;
   const subs = (p && p.subcontractors) || [];
   const subId = subs.length===1 ? subs[0].id : null;
-  const previous = vowdPreviousFor(subId);
+  const previous = vowdPreviousFor(subId, null, '');
   return {
     id:null, vowdNumber:null, status:'Draft',
     statementDate: toDateInput(new Date()), financialYear: String(new Date().getFullYear()), asOfDate: toDateInput(new Date()),
     lastBilledRef: previous ? previous.vowdNumber : '',
     contractNo: p ? (p.contractReference||'') : '', contractorName: p ? (p.contractor||'') : '',
     subcontractorId: subId,
-    subcontractorPoRef: previous ? (previous.subcontractorPoRef||'') : '',
+    subcontractorPoRef: '',
     projectTitle: p ? (p.name||'') : '',
     generalManager:'', supplyChainManagement:'',
     awardedContractValue: p ? +p.contractValue.toFixed(3) : 0,
     variationOrderValue: previous ? previous.variationOrderValue : 0,
     approvedVoRef: previous ? (previous.approvedVoRef||'') : '', vatPct: previous ? previous.vatPct : 5,
-    _auto: { vo: previous ? previous.variationOrderValue : 0, voRef: previous ? (previous.approvedVoRef||'') : '', vat: previous ? previous.vatPct : 5, po: previous ? (previous.subcontractorPoRef||'') : '' },
+    _auto: { vo: previous ? previous.variationOrderValue : 0, voRef: previous ? (previous.approvedVoRef||'') : '', vat: previous ? previous.vatPct : 5 },
     ...vowdLbCarryForwardClient(previous),
     cumWorkDone:0, cumVariations:0, cumMaterialsAtSite:0, cumAdvancePaid:0, cumAdvanceRecovered:0, cumRetentionDeduction:0, cumPreviouslyCertified:0, cumOtherDeductions:0,
     cumPreviouslyCertifiedManual:false,
@@ -8396,6 +8420,10 @@ function renderVowdBuilder(){
   const wrap = document.getElementById('pfVowdBody');
   const d = vowdDraft;
   const revised = +(Number(d.awardedContractValue||0) + Number(d.variationOrderValue||0)).toFixed(3);
+  const poOptions = vowdPoOptions(d.subcontractorId);
+  // A statement saved with a PO that is no longer in the Sequence of Events (or was typed free-hand before this was a
+  // dropdown) keeps it, shown as its own option, so opening and saving the statement does not drop it.
+  const legacyPo = (d.subcontractorPoRef||'').trim() && !poOptions.some(o=> vowdPoKey(o.po)===vowdPoKey(d.subcontractorPoRef));
 
   wrap.innerHTML = `
     <div id="vowdWarnings"></div>
@@ -8430,8 +8458,12 @@ function renderVowdBuilder(){
         </div>
         <div>
           <label class="form-label-sm">Sub Contractor PO Ref <span style="font-weight:400;color:var(--grey);">· optional</span></label>
-          <input class="form-control" id="vowdSubPoRef" maxlength="200" value="${esc(d.subcontractorPoRef||'')}" placeholder="e.g. PO-2026-0457">
-          <div class="sub-planned-note">Free text — shown on the VOWD print preview.</div>
+          <select class="form-select" id="vowdSubPoRef">
+            <option value="">No PO selected</option>
+            ${poOptions.map(o=>`<option value="${esc(o.po)}" ${vowdPoKey(o.po)===vowdPoKey(d.subcontractorPoRef)?'selected':''}>${esc(o.po)}</option>`).join('')}
+            ${legacyPo ? `<option value="${esc(d.subcontractorPoRef)}" selected>${esc(d.subcontractorPoRef)} (not in Sequence of Events)</option>` : ''}
+          </select>
+          <div class="sub-planned-note">${poOptions.length ? 'From the PO Ref No. of the Crew / Labor lines in the Sequence of Events. Last Billed &amp; Certified Value follows the PO.' : 'No PO Ref No. entered yet — add it on a Crew / Labor line in the Sequence of Events (Project Brief), save, then pick it here.'}</div>
         </div>
         <div>
           <label class="form-label-sm">Sub Contractor Planned Value <span style="font-weight:400;color:var(--grey);">· from Sequence of Events</span></label>
@@ -8462,7 +8494,7 @@ function renderVowdBuilder(){
         <table class="dash-table pf-line-table">
           <thead><tr>
             <th style="min-width:220px;">Item Description</th>
-            <th>Last Billed &amp; Certified Value <span style="font-weight:400;color:var(--grey);text-transform:none;">· auto, ${d.lastBilledRef ? `from ${d.lastBilledRef}` : 'none yet — starts at 0'} (${((pfCurrentProject.subcontractors||[]).find(s=>s.id===d.subcontractorId)||{}).name || 'no sub contractor'})</span></th>
+            <th>Last Billed &amp; Certified Value <span style="font-weight:400;color:var(--grey);text-transform:none;">· auto, ${d.lastBilledRef ? `from ${d.lastBilledRef}` : 'none yet — starts at 0'} (${(d.subcontractorPoRef||'').trim() ? `PO ${esc(d.subcontractorPoRef.trim())}` : `no PO — ${esc(((pfCurrentProject.subcontractors||[]).find(s=>s.id===d.subcontractorId)||{}).name || 'no sub contractor')}`})</span></th>
             <th>Cum. Value of Work Done${d.asOfDate? ` as of ${fmtDate(new Date(d.asOfDate))}`:''}</th>
           </tr></thead>
           <tbody>
@@ -8540,7 +8572,7 @@ function renderVowdBuilder(){
     }
   });
   bind('vowdStatementDate','statementDate'); bind('vowdFinancialYear','financialYear'); bind('vowdAsOfDate','asOfDate');
-  bind('vowdContractNo','contractNo'); bind('vowdContractorName','contractorName'); bind('vowdProjectTitle','projectTitle'); bind('vowdSubPoRef','subcontractorPoRef');
+  bind('vowdContractNo','contractNo'); bind('vowdContractorName','contractorName'); bind('vowdProjectTitle','projectTitle');
   document.getElementById('vowdGeneralManager').addEventListener('change', e=>{ d.generalManager = e.target.value; });
   bind('vowdSupplyChain','supplyChainManagement');
   bind('vowdAwardedValue','awardedContractValue', v=>Number(v)||0);
@@ -8548,12 +8580,32 @@ function renderVowdBuilder(){
   bind('vowdApprovedVoRef','approvedVoRef');
   bind('vowdItemNotes','itemNotes'); bind('vowdRetentionRemarks','retentionRemarks');
   document.getElementById('vowdStatus').addEventListener('change', e=>{ d.status = e.target.value; });
-  document.getElementById('vowdSubcontractorId').addEventListener('change', e=>{
-    d.subcontractorId = e.target.value ? Number(e.target.value) : null;
-    // Last Billed & Certified Value follows the sub contractor: re-carry it from that sub contractor's own previous statement.
+  // Last Billed & Certified Value follows the chosen PO (not the sub contractor): re-carry it from the previous statement
+  // of that PO. Changing the sub contractor only narrows the PO list — a PO that is not theirs is cleared, and with no PO
+  // the statement falls back to the sub contractor's own no-PO statements.
+  const carryAndRender = ()=>{
     const previous = applyVowdSubcontractor(d);
     renderVowdBuilder();
-    showToast(previous ? `Last Billed & Certified Value now carried from ${previous.vowdNumber}` : 'No earlier statement for this sub contractor — Last Billed & Certified Value starts at 0');
+    const po = (d.subcontractorPoRef||'').trim();
+    showToast(previous ? `Last Billed & Certified Value now carried from ${previous.vowdNumber}` : (po ? `No earlier statement for PO ${po} — Last Billed & Certified Value starts at 0` : 'No earlier statement — Last Billed & Certified Value starts at 0'));
+  };
+  document.getElementById('vowdSubcontractorId').addEventListener('change', e=>{
+    d.subcontractorId = e.target.value ? Number(e.target.value) : null;
+    const inList = list => list.some(o=> vowdPoKey(o.po)===vowdPoKey(d.subcontractorPoRef));
+    if((d.subcontractorPoRef||'').trim() && inList(vowdPoOptions(null)) && !inList(vowdPoOptions(d.subcontractorId))) d.subcontractorPoRef = ''; // another sub contractor's PO
+    carryAndRender();
+  });
+  document.getElementById('vowdSubPoRef').addEventListener('change', e=>{
+    d.subcontractorPoRef = e.target.value;
+    // Picking a PO that belongs to exactly one sub contractor fills the (empty) Sub Contractor field with them.
+    if(d.subcontractorPoRef && !d.subcontractorId){
+      const hit = vowdPoOptions(null).find(o=> vowdPoKey(o.po)===vowdPoKey(d.subcontractorPoRef));
+      if(hit && hit.subIds.size===1){
+        const only = [...hit.subIds][0];
+        if((pfCurrentProject.subcontractors||[]).some(sc=>sc.id===only)) d.subcontractorId = only;
+      }
+    }
+    carryAndRender();
   });
   showSubPlannedValue(d.subcontractorId, 'vowdSubPlanned', 'vowdSubPlannedNote');
   document.getElementById('vowdVatPct').addEventListener('input', e=>{ d.vatPct = Number(e.target.value)||0; updateVowdComputedCells(); });
@@ -8627,7 +8679,7 @@ function renderVowdWarnings(cum){
     warnings.push(`<b>Cannot save:</b> Cumulative Value of Work Done + Variations (${fmtOMR3(cumWorkPlusVar)}) exceeds the Revised Contract Value (${fmtOMR3(revised)}) by ${overrun}%. Correct the cumulative values or the awarded / variation values.`);
   }
   if(cum.netDue < 0) warnings.push(`Net Due (Cumulative) is negative (${fmtOMR3(cum.netDue)}) — check deductions against the Value of Work Done.`);
-  const previous = vowdPreviousFor(d.subcontractorId, d.id);
+  const previous = vowdPreviousFor(d.subcontractorId, d.id, d.subcontractorPoRef);
   if(previous && d.statementDate && previous.statementDate && d.statementDate < previous.statementDate){
     warnings.push(`Statement Date is before the previous VOWD statement (${previous.vowdNumber}, ${fmtDate(new Date(previous.statementDate))}).`);
   }
@@ -8710,11 +8762,12 @@ function renderPastVowdList(){
   }
   wrap.innerHTML = `
     <table class="inv-list-table">
-      <thead><tr><th>VOWD #</th><th>As Of</th><th>Net Due (Cum.)</th><th>Status</th><th>Approval</th><th></th></tr></thead>
+      <thead><tr><th>VOWD #</th><th>Sub Contractor</th><th>As Of</th><th>Net Due (Cum.)</th><th>Status</th><th>Approval</th><th></th></tr></thead>
       <tbody>
         ${pfVowdForProject.map(v=>`
           <tr>
             <td><strong>${v.vowdNumber}</strong></td>
+            <td>${v.subcontractorName ? esc(v.subcontractorName) : '—'}</td>
             <td>${v.asOfDate? fmtDate(new Date(v.asOfDate)) : '—'}</td>
             <td>${fmtOMR3(v.cumulative.netDue)}</td>
             <td>${badge(v.status)}</td>
