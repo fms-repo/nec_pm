@@ -299,6 +299,80 @@ block('slippage-recovery', 'Progress & schedule', 'Slippage and recovery', 'Whic
     ];
   });
 
+/* ---------- Progress by subcontractor / by event ---------- */
+const STATUS_TONE = { Completed: 'good', Delayed: 'bad', 'On Hold': 'warn' };
+const NO_SUB = 'No subcontractor assigned';
+// eventId -> [subcontractor names], from the crew / labour lines attached to each event
+async function subsByEvent(c) {
+  const by = new Map();
+  (await c.eventCrews()).forEach(r => { if (!by.has(r.event_id)) by.set(r.event_id, new Map()); by.get(r.event_id).set(r.contractor_id, r.contractor); });
+  return by;
+}
+const vTone = v => (v == null ? undefined : v < -10 ? 'bad' : v < -3 ? 'warn' : 'good');
+const svTone = v => (v == null ? 'muted' : v >= 0 ? 'good' : v > -14 ? 'warn' : 'bad');
+
+block('progress-by-subcontractor', 'Progress & schedule', 'Progress by subcontractor', 'Each subcontractor\'s share of the work: planned vs actual progress, SPI, days ahead / behind, overdue events and the events they carry (linked through the crew / labour lines of each event).',
+  { menus: ['progress', 'gantt', 'overview'] }, async c => {
+    const E = await c.events(), subs = await subsByEvent(c);
+    const groups = new Map(); // contractor id (0 = none) -> { name, events }
+    const add = (id, name, e) => { if (!groups.has(id)) groups.set(id, { id, name, events: [] }); groups.get(id).events.push(e); };
+    const only = c.filter && c.filter.subcontractorIds.length ? new Set(c.filter.subcontractorIds) : null; // a subcontractor filter keeps only the chosen subcontractors' rows
+    E.forEach(e => { const s = subs.get(e.id); if (s && s.size) s.forEach((name, id) => { if (!only || only.has(id)) add(id, name, e); }); else if (!only || only.has(0)) add(0, NO_SUB, e); });
+    const list = [...groups.values()];
+    const key = g => 'sub:' + g.id;
+    // every subcontractor is measured as one pseudo-project made of its events, using the same calculations as the Project Progress page
+    const an = PC.analyse(list.map(g => ({ id: key(g), code: '', name: g.name, businessUnit: '', status: '', endDate: null, approvedBudget: 0 })),
+      list.flatMap(g => g.events.map(e => ({ ...e, projectId: key(g) }))), { today: c.today, from: c.period.from, to: c.period.to });
+    const byKey = new Map(an.rows.map(r => [r.id, r])), gOf = new Map(list.map(g => [key(g), g]));
+    const rows = list.map(g => {
+      const r = byKey.get(key(g)), projects = new Set(g.events.map(e => e.projectId)).size;
+      return { _none: g.id === 0, name: g.name, projects, events: r.tasks, done: r.done, doing: g.events.filter(e => e.status === 'In Progress').length, todo: g.events.filter(e => e.status === 'Not Started').length,
+        overdue: cell(r.overdue, r.overdue ? 'warn' : undefined), planned: r.planned, actual: r.actual, variance: r.variance == null ? null : cell(r.variance, vTone(r.variance)), spi: r.spi == null ? null : cell(r.spi, r.spi >= 0.95 ? 'good' : r.spi >= 0.85 ? 'warn' : 'bad'),
+        sv: r.svDays == null ? cell('not started', 'muted') : cell(r.svDays, svTone(r.svDays)), finished: r.finishedInPeriod, finish: r.scheduleFinish, forecast: r.forecast };
+    }).sort((a, b) => (a._none - b._none) || ((a.variance ? a.variance.v : 999) - (b.variance ? b.variance.v : 999)) || a.name.localeCompare(b.name));
+    const noneEvents = sum(rows.filter(r => r._none), r => r.events), named = rows.filter(r => !r._none), behind = named.filter(r => r.variance && r.variance.v < 0).length;
+    const detail = PC.measurement(an).map(m => ({ g: gOf.get(m.projectId), m })).sort((x, y) => (x.g.id === 0) - (y.g.id === 0) || x.g.name.localeCompare(y.g.name) || String(x.m.plannedEnd || '9').localeCompare(String(y.m.plannedEnd || '9')))
+      .map(({ g, m }) => { const ev = E.find(e => e.id === m.eventId);
+        return { sub: g.name, project: ev ? ev.projectName : '', stage: m.stage, task: m.task, ps: m.plannedStart, pe: m.plannedEnd, as: m.actualStart, ae: m.actualEnd, status: cell(m.status, STATUS_TONE[m.status]),
+          planned: m.planned, actual: m.actual, variance: m.variance == null ? null : cell(m.variance, vTone(m.variance)), late: m.daysLate ? cell(m.daysLate, m.daysLate > 30 ? 'bad' : 'warn') : 0 }; });
+    const P = an.portfolio;
+    return [
+      kpis('Subcontractor progress at a glance', [
+        { label: 'Subcontractors', value: named.length, type: 'int', sub: `${behind} behind plan` }, { label: 'Events with a subcontractor', value: E.length - noneEvents, type: 'int', sub: 'an event shared by two subcontractors shows under each' },
+        { label: 'Events with none assigned', value: noneEvents, type: 'int', tone: noneEvents ? 'warn' : undefined, sub: 'no crew / labour line names a subcontractor' },
+        { label: `Events finished ${c.period.label}`, value: P.finishedInPeriod, type: 'int' }]),
+      table('Progress by subcontractor', [col('name', 'Subcontractor'), col('projects', 'Projects', 'int'), col('events', 'Events', 'int'), col('done', 'Completed', 'int'), col('doing', 'In progress', 'int'), col('todo', 'Not started', 'int'), col('overdue', 'Overdue', 'int'),
+        col('planned', 'Planned %', 'pct'), col('actual', 'Actual %', 'pct'), col('variance', 'Variance (pts)', 'num1'), col('spi', 'SPI', 'ratio'), col('sv', 'Days ahead (+) / behind (−)', 'int'), col('finished', `Finished ${c.period.label}`, 'int'), col('finish', 'Planned finish', 'date'), col('forecast', 'Forecast finish', 'date')],
+      rows.map(({ _none, ...r }) => r), { empty: 'No events have been planned for the selected projects.',
+        note: 'A subcontractor is linked to an event through the crew / labour lines of that event (Sequence of Events). Each subcontractor is measured on its own events across the selected projects, weighted by planned duration — the same method as the Project Progress page. Events that carry no subcontractor are grouped at the end.' }),
+      table('Events by subcontractor', [col('sub', 'Subcontractor'), col('project', 'Project'), col('stage', 'Stage'), col('task', 'Event'), col('ps', 'Planned start', 'date'), col('pe', 'Planned finish', 'date'), col('as', 'Actual start', 'date'), col('ae', 'Actual finish', 'date'),
+        col('status', 'Status', 'text', 'center'), col('planned', 'Planned %', 'pct'), col('actual', 'Actual %', 'pct'), col('variance', 'Variance (pts)', 'num1'), col('late', 'Days late', 'int')], detail,
+      { empty: 'No events.', note: 'Planned % = how much of the event the schedule says should be done today; actual % = recorded progress.' })
+    ];
+  });
+
+block('progress-by-event', 'Progress & schedule', 'Progress by event', 'Every event of the Sequence of Events with its subcontractor(s), planned vs actual dates, planned vs actual progress, variance and days late.',
+  { menus: ['progress', 'gantt', 'overview'] }, async c => {
+    const P = await c.projects(), E = await c.events(), subs = await subsByEvent(c);
+    const an = PC.analyse(P, E, { today: c.today, from: c.period.from, to: c.period.to }), T = an.portfolio;
+    const evOf = new Map(E.map(e => [e.id, e]));
+    const m = PC.measurement(an).sort((a, b) => a.project.localeCompare(b.project) || (a.seq || 0) - (b.seq || 0));
+    const rows = m.map(x => { const s = subs.get(x.eventId); return { project: x.project, stage: x.stage, seq: x.seq, task: x.task, sub: s && s.size ? [...s.values()].join(', ') : '—', ps: x.plannedStart, pe: x.plannedEnd, as: x.actualStart, ae: x.actualEnd,
+      status: cell(x.status, STATUS_TONE[x.status]), planned: x.planned, actual: x.actual, variance: x.variance == null ? null : cell(x.variance, vTone(x.variance)), late: x.daysLate ? cell(x.daysLate, x.daysLate > 30 ? 'bad' : 'warn') : 0,
+      who: (evOf.get(x.eventId) || {}).assignedTo || '—' }; });
+    const n = s => m.filter(x => x.status === s).length;
+    return [
+      kpis('Event progress at a glance', [
+        { label: 'Events', value: m.length, type: 'int', sub: `${n('Completed')} completed` }, { label: 'In progress', value: n('In Progress'), type: 'int', sub: `${n('Not Started')} not started` },
+        { label: 'Overdue', value: T.overdue, type: 'int', tone: T.overdue ? 'warn' : 'good' }, { label: `Finished ${c.period.label}`, value: T.finishedInPeriod, type: 'int', sub: T.dueInPeriod ? `${T.dueDonePct}% of ${T.dueInPeriod} due` : 'none were due' },
+        { label: 'Actual progress', value: T.actual, type: 'pct', sub: `planned ${T.planned}%`, tone: vTone(T.variance) }]),
+      table('Progress by event', [col('project', 'Project'), col('stage', 'Stage'), col('seq', '#', 'int'), col('task', 'Event'), col('sub', 'Subcontractor'), col('who', 'Assigned to'), col('ps', 'Planned start', 'date'), col('pe', 'Planned finish', 'date'), col('as', 'Actual start', 'date'), col('ae', 'Actual finish', 'date'),
+        col('status', 'Status', 'text', 'center'), col('planned', 'Planned %', 'pct'), col('actual', 'Actual %', 'pct'), col('variance', 'Variance (pts)', 'num1'), col('late', 'Days late', 'int')], rows,
+      { empty: 'No events have been planned for the selected projects.',
+        note: 'Events are listed in Sequence-of-Events order for each project. Subcontractor = the sub contractor(s) named on the event\'s crew / labour lines. Planned % = how much of the event the schedule says should be done today; days late counts from the planned finish (or the actual finish, if it finished late).' })
+    ];
+  });
+
 /* ---------- Financial ---------- */
 block('financial-evm', 'Financial', 'Earned value (EVM) by project', 'Budget, planned value, earned value, actual cost, CPI / SPI and forecast at completion for each project.',
   { menus: ['financial'] }, async c => {
@@ -543,6 +617,14 @@ const REPORTS = [
     description: 'Which projects lost or regained schedule in the period, month-by-month slippage and the most overdue activities.',
     menus: ['progress', 'gantt', 'overview'], layout: 'standard', period: 'this-month', audience: 'PMO · Project managers',
     blocks: ['slippage-recovery'] },
+  { key: 'progress-subcontractor', category: 'Progress & schedule', icon: 'bi-people', title: 'Progress report — by subcontractor', tag: 'Subcontractor',
+    description: 'Progress of each subcontractor: planned vs actual, SPI, days ahead / behind, overdue events and the events they carry.',
+    menus: ['progress', 'gantt', 'overview'], layout: 'standard', period: 'this-month', audience: 'PMO · Project managers · SCM',
+    blocks: ['progress-by-subcontractor'] },
+  { key: 'progress-event', category: 'Progress & schedule', icon: 'bi-list-check', title: 'Progress report — by event', tag: 'Event',
+    description: 'Every event of the Sequence of Events with its subcontractor, planned vs actual dates and progress, variance and days late.',
+    menus: ['progress', 'gantt', 'overview'], layout: 'compact', period: 'this-month', audience: 'PMO · Project managers',
+    blocks: ['progress-by-event'] },
   { key: 'schedule', category: 'Progress & schedule', icon: 'bi-kanban', title: 'Schedule and Gantt status', tag: 'Schedule',
     description: 'Stage progress, every task past its planned finish and everything due in the next 14 days.',
     menus: ['gantt', 'progress'], layout: 'standard', period: 'this-month', audience: 'PMO · Project managers',

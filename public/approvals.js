@@ -327,9 +327,14 @@ async function loadUserAccounts(){
         <td>${a ? `<select class="form-select appr-role-select" onchange="setAccountRole(${m.id}, this.value)">
               ${Object.entries(ROLE_LABEL).map(([k, v]) => `<option value="${k}" ${a.role === k ? 'selected' : ''}>${v}</option>`).join('')}
             </select>
-            ${a.role === 'approver' ? '' : `<div><button class="btn btn-link btn-sm p-0 mt-1" onclick="editPermissions(${m.id})">${a.permissions ? 'Permissions: custom' : 'Permissions: role template'} · change</button></div>
-            <div><button class="btn btn-link btn-sm p-0" onclick="editMenuAccess(${m.id})">${a.menus ? `Menus: ${a.menus.length} of ${sidebarMenus().length}` : 'Menus: all'} · change</button></div>
-            <button class="btn btn-link btn-sm p-0" onclick="editProjectAccess(${m.id})">${a.projectIds.length ? `${a.projectIds.length} project${a.projectIds.length === 1 ? '' : 's'}` : '<span style="color:var(--red);">No projects yet</span>'} · change</button>`}` : '—'}</td>
+            ${a.role === 'approver' ? '' : `<div class="acct-access">
+              <button class="btn btn-link btn-sm p-0" onclick="editAccess(${m.id})"><i class="bi bi-shield-lock"></i> <strong>Access</strong> · change</button>
+              <div class="appr-muted acct-access-sum">
+                <a href="#" onclick="editAccess(${m.id}, 'menus'); return false;">Menus: ${a.menus ? `${a.menus.length} of ${sidebarMenus().length}` : 'all'}</a> ·
+                <a href="#" onclick="editAccess(${m.id}, 'permissions'); return false;">Permissions: ${a.permissions ? 'custom' : 'role template'}</a> ·
+                <a href="#" onclick="editAccess(${m.id}, 'projects'); return false;">${a.projectIds.length ? `${a.projectIds.length} project${a.projectIds.length === 1 ? '' : 's'}` : '<span style="color:var(--red);">No projects yet</span>'}</a>${a.projectIds.length ? ` ·
+                <a href="#" onclick="editAccess(${m.id}, 'ptabs'); return false;">Tabs: ${Object.keys(a.projectPermissions || {}).length ? `${Object.keys(a.projectPermissions).length} custom` : 'same on all'}</a>` : ''}
+              </div></div>`}` : '—'}</td>
         <td>${status}</td>
         <td>${a && a.lastLoginAt ? fmtBinTime(a.lastLoginAt) : '—'}</td>
         <td class="row-actions" style="white-space:nowrap;">
@@ -389,45 +394,172 @@ function sidebarMenus(){
   });
   return out;
 }
-// The permission matrix (ACL): which actions this login may take on each kind of record.
-async function editPermissions(memberId){
+/* =========================================================
+   ACCESS — everything about what one login may see and do, in ONE dialog with one Save:
+     Menus          which sidebar menus the person sees
+     Permissions    what they may do with each kind of record (view / create / edit / delete, and "actual qty only" on the Sequence of Events)
+     Projects       which projects they can reach
+     Project tabs   for a project, what they may do on each tab of the project form (replaces the Permissions for that project)
+   Only what was changed is sent. The account row's links open this same dialog on the matching tab.
+   ========================================================= */
+const ACT_LABEL = { view: 'View', actuals: 'Actual qty only', create: 'Create', edit: 'Edit', delete: 'Delete' };
+const accJson = v => JSON.stringify(v);
+const accNormMatrix = m => (m ? Object.fromEntries(Object.keys(m).sort().filter(k => (m[k] || []).length).map(k => [k, [...m[k]].sort()])) : null);
+
+function accessMenusHtml(acct, name){
+  const menus = sidebarMenus(), chosen = new Set(acct.menus || menus.map(x => x.key));
+  let lastGroup = '';
+  return `<div class="appr-note">Choose which menus ${esc(name)} sees. My Approvals is always available. Hiding Risk Register / Risk Analytics, Issue Log or Milestones also blocks that data on the server; other menus are hidden from the screen.</div>
+    <label class="appr-proj-list" style="display:flex;margin:0 0 6px;"><input type="checkbox" id="maDefault" ${acct.menus ? '' : 'checked'}> <span><strong>Use the role default</strong> — every menu</span></label>
+    <div class="appr-proj-list" id="maList">${menus.map(x => {
+      const head = x.group !== lastGroup ? `<div class="appr-muted" style="margin-top:8px;font-weight:700;text-transform:uppercase;">${esc(x.group)}</div>` : '';
+      lastGroup = x.group;
+      return `${head}<label><input type="checkbox" value="${x.key}" ${chosen.has(x.key) ? 'checked' : ''} ${acct.menus ? '' : 'disabled'}> <span>${esc(x.label)}</span></label>`;
+    }).join('')}</div>`;
+}
+/* The Permissions grid as a tree: the project tabs sit under Projects, the master-data lists under Master Data. A record the catalogue
+   knows about but this list does not mention is added at the end, so a new permission can never go missing from the screen. */
+const ACCESS_TREE = [
+  { key: 'projects', label: 'Projects', hint: 'Project Brief tab',
+    children: [['events', 'Sequence of Events', 'materials, crew / contractor'], ['team', 'Resources', 'team members, external parties, resource groups'], ['cost', 'Cost Statement', ''],
+      ['documents', 'Attachments', 'project documents'], ['change_requests', 'Change Requests', 'analyses, decisions'], ['certificates', 'Completion Certificates', ''],
+      ['vowd', 'VOWD Statements', ''], ['invoices', 'Invoices', '']] },
+  { key: 'risks', label: 'Risks' }, { key: 'issues', label: 'Issues' }, { key: 'milestones', label: 'Milestones' },
+  { group: 'Master Data', children: [['locations', 'Locations', ''], ['project_types', 'Project Types', ''], ['contractors', 'Contractors', ''], ['business_units', 'Business Units', ''], ['team_members', 'Team Members', '']] },
+  { key: 'reports', label: 'Report Library', hint: 'generate reports, saved reports, schedules' }
+];
+function accessPermissionRows(cat, cellsOf){
+  const byKey = new Map(cat.resources.map(r => [r.key, r])), used = new Set();
+  const name = (label, hint) => `${esc(label)}${hint ? ` <span class="pm-hint">${esc(hint)}</span>` : ''}`;
+  const row = (r, label, hint, cls) => { used.add(r.key); return `<tr class="${cls}"><td>${name(label, hint)}</td>${cellsOf(r)}</tr>`; };
+  const out = [];
+  ACCESS_TREE.forEach(node => {
+    const kids = (node.children || []).filter(c => byKey.has(c[0]));
+    if(node.group){
+      if(!kids.length) return;
+      out.push(`<tr class="pm-group"><td colspan="${cat.actions.length + 2}">${esc(node.group)}</td></tr>`);
+      kids.forEach((c, i) => out.push(row(byKey.get(c[0]), c[1], c[2], `pm-child${i === kids.length - 1 ? ' pm-last' : ''}`)));
+      return;
+    }
+    if(!byKey.has(node.key)) return;
+    out.push(row(byKey.get(node.key), node.label, node.hint, kids.length ? 'pm-parent' : 'pm-top'));
+    kids.forEach((c, i) => out.push(row(byKey.get(c[0]), c[1], c[2], `pm-child${i === kids.length - 1 ? ' pm-last' : ''}`)));
+  });
+  cat.resources.filter(r => !used.has(r.key)).forEach(r => out.push(row(r, r.label, '', 'pm-top')));
+  return out.join('');
+}
+function accessPermissionsHtml(acct, cat, name){
+  // the grid shows what the login really has: for a custom matrix that includes rows the stored matrix does not list (they follow other rows)
+  const start = acct.effectivePermissions || cat.templates[acct.role] || {};
+  // not every record has every action (only the Sequence of Events has "Actual qty only"; the Cost Statement can only be viewed)
+  const cell = (r, a) => (r.actions.includes(a) ? `<td class="text-center"><input type="checkbox" data-r="${r.key}" data-a="${a}" ${(start[r.key] || []).includes(a) ? 'checked' : ''} ${acct.permissions ? '' : 'disabled'}></td>` : '<td></td>');
+  return `<div class="appr-note">Tick what ${esc(name)} may do with each kind of record. Project records are further limited to the projects granted to them. Approvals are separate: a document assigned to them for approval can always be opened and signed.<br><strong>Actual qty only</strong> on the Sequence of Events lets them record Actual / Consumed quantities (and dated entries) and change nothing else; <strong>Edit</strong> includes it. To give one project different rights, use the <em>Project tabs</em> tab.</div>
+    <label class="appr-proj-list" style="display:flex;margin:0 0 8px;"><input type="checkbox" id="pmDefault" ${acct.permissions ? '' : 'checked'}> <span><strong>Use the role template</strong> (${esc(ROLE_LABEL[acct.role])})</span></label>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;" id="pmFill">
+      <span class="appr-muted" style="align-self:center;">Fill from:</span>
+      <button type="button" class="btn btn-outline-secondary btn-sm" data-fill="read_only">Read only</button>
+      <button type="button" class="btn btn-outline-secondary btn-sm" data-fill="project_manager">Project manager</button>
+      <button type="button" class="btn btn-outline-secondary btn-sm" data-fill="none">Nothing</button>
+    </div>
+    <div class="table-responsive"><table class="dash-table" id="pmGrid"><thead><tr><th>Records</th>${cat.actions.map(a => `<th class="text-center">${ACT_LABEL[a]}</th>`).join('')}<th class="text-center">All</th></tr></thead><tbody>
+    ${accessPermissionRows(cat, r => `${cat.actions.map(a => cell(r, a)).join('')}<td class="text-center"><input type="checkbox" data-row="${r.key}" ${acct.permissions ? '' : 'disabled'}></td>`)}
+    </tbody></table></div>`;
+}
+function accessProjectsHtml(acct){
+  const chosen = new Set(acct.projectIds), list = [...projects].sort((a, b) => String(a.code).localeCompare(String(b.code)));
+  return `<div class="appr-note">${esc(ROLE_LABEL[acct.role])}: can ${acct.role === 'read_only' ? 'view' : 'view and edit'} only the projects ticked here. Remove a project to hide it from this person completely.</div>
+    <div style="display:flex;gap:8px;align-items:center;">
+      <input class="form-control" id="paSearch" placeholder="Search projects…">
+      <button type="button" class="btn btn-outline-secondary btn-sm" id="paAll">Select shown</button>
+      <button type="button" class="btn btn-outline-secondary btn-sm" id="paNone">Clear shown</button>
+    </div>
+    <div class="appr-proj-list" id="paList">${list.map(p => `<label data-q="${esc((p.code + ' ' + p.name).toLowerCase())}"><input type="checkbox" value="${p.id}" ${chosen.has(p.id) ? 'checked' : ''}> <span><strong>${esc(p.code)}</strong> — ${esc(p.name)}</span></label>`).join('')}</div>`;
+}
+function accessProjectTabsHtml(name){
+  return `<div class="appr-note">Choose, project by project, what ${esc(name)} may do on each tab of the project form. A project on <strong>the login's own permissions</strong> follows the Permissions tab. A custom project replaces it for these nine tabs only (risks, issues and milestones are not tabs).
+    On the <strong>Sequence of Events</strong>, <em>Actual qty only</em> lets them enter Actual / Consumed quantities and nothing else. <em>Create</em> and <em>Delete</em> there apply to events and their material / crew lines, together with <em>Edit</em>. A tab with no tick is hidden from them on that project. Only the projects ticked on the Projects tab are listed.</div>
+    <div id="ptEmpty" class="appr-muted" hidden>Tick at least one project on the Projects tab first.</div>
+    <div id="ptBody">
+      <label class="form-label-sm">Project</label>
+      <select class="form-select" id="ptProject"></select>
+      <label class="appr-proj-list" style="display:flex;margin:10px 0 8px;"><input type="checkbox" id="ptDefault"> <span><strong>Use the login's own permissions</strong> on this project</span></label>
+      <div class="table-responsive" id="ptGrid"></div>
+    </div>`;
+}
+
+async function editAccess(memberId, startTab = 'menus'){
   const m = teamMembersMaster.find(x => x.id === memberId);
   const [accounts, cat] = await Promise.all([api.get('/api/user-accounts'), api.get('/api/user-accounts/acl-catalog')]);
   const acct = accounts.find(a => a.teamMemberId === memberId);
-  const start = acct.permissions || cat.templates[acct.role] || {};
-  const ACT_LABEL = { view: 'View', create: 'Create', edit: 'Edit', delete: 'Delete' };
-  const cell = (r, a) => `<td class="text-center"><input type="checkbox" data-r="${r.key}" data-a="${a}" ${(start[r.key] || []).includes(a) ? 'checked' : ''} ${acct.permissions ? '' : 'disabled'}></td>`;
+  if(!acct || acct.role === 'approver'){ showToast('An approver-only login has no menus, permissions or projects. Change its role first.', 'error'); return; }
+  const original = {}, state = {};
+  acct.projectIds.forEach(pid => { const o = (acct.projectPermissions || {})[pid] || null; original[pid] = accNormMatrix(o); state[pid] = o ? JSON.parse(JSON.stringify(o)) : null; });
+  window.__pt = { state, original, current: null, tabs: cat.tabs.map(t => ({ ...t, res: cat.resources.find(r => r.key === t.resource) })), own: acct.effectivePermissions || {}, actions: cat.actions };
+  const nCustom = Object.keys(acct.projectPermissions || {}).length;
+  const TABS = [
+    ['menus', 'Menus', acct.menus ? `${acct.menus.length} of ${sidebarMenus().length}` : 'all'],
+    ['permissions', 'Permissions', acct.permissions ? 'custom' : 'role template'],
+    ['projects', 'Projects', acct.projectIds.length ? String(acct.projectIds.length) : 'none'],
+    ['ptabs', 'Project tabs', nCustom ? `${nCustom} custom` : 'same on all']
+  ];
+  const panes = { menus: accessMenusHtml(acct, m.name), permissions: accessPermissionsHtml(acct, cat, m.name), projects: accessProjectsHtml(acct), ptabs: accessProjectTabsHtml(m.name) };
   const res = await appDialog({
-    title: `Permissions — ${m.name}`, confirmText: 'Save permissions', size: 'modal-lg',
-    html: `<div class="appr-note">Tick what ${esc(m.name)} may do with each kind of record. Project records are further limited to the projects granted to them. Approvals are separate: a document assigned to them for approval can always be opened and signed.</div>
-      <label class="appr-proj-list" style="display:flex;margin:0 0 8px;"><input type="checkbox" id="pmDefault" ${acct.permissions ? '' : 'checked'}> <span><strong>Use the role template</strong> (${esc(ROLE_LABEL[acct.role])})</span></label>
-      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;" id="pmFill">
-        <span class="appr-muted" style="align-self:center;">Fill from:</span>
-        <button type="button" class="btn btn-outline-secondary btn-sm" data-fill="read_only">Read only</button>
-        <button type="button" class="btn btn-outline-secondary btn-sm" data-fill="project_manager">Project manager</button>
-        <button type="button" class="btn btn-outline-secondary btn-sm" data-fill="none">Nothing</button>
-      </div>
-      <div class="table-responsive"><table class="dash-table" id="pmGrid"><thead><tr><th>Records</th>${cat.actions.map(a => `<th class="text-center">${ACT_LABEL[a]}</th>`).join('')}<th class="text-center">All</th></tr></thead><tbody>
-      ${cat.resources.map(r => `<tr><td>${esc(r.label)}${r.scoped ? '' : ' <span class="appr-muted">(not project-specific)</span>'}</td>${cat.actions.map(a => cell(r, a)).join('')}
-        <td class="text-center"><input type="checkbox" data-row="${r.key}" ${acct.permissions ? '' : 'disabled'}></td></tr>`).join('')}
-      </tbody></table></div>`,
+    title: `Access — ${m.name}`, confirmText: 'Save access', size: 'modal-lg',
+    html: `<div class="ac-tabs" id="acTabs">${TABS.map(([k, label, note]) => `<button type="button" class="ac-tab ${k === startTab ? 'on' : ''}" data-ac="${k}">${label}<small>${esc(note)}</small></button>`).join('')}</div>
+      ${TABS.map(([k]) => `<div class="ac-pane" data-ac-pane="${k}" ${k === startTab ? '' : 'hidden'}>${panes[k]}</div>`).join('')}`,
     onConfirm: el => {
-      if(el.querySelector('#pmDefault').checked) return api.put(`/api/team-members/${memberId}/account/access`, { permissions: null });
-      const matrix = {};
-      el.querySelectorAll('#pmGrid input[data-r]:checked').forEach(i => { (matrix[i.dataset.r] ||= []).push(i.dataset.a); });
-      return api.put(`/api/team-members/${memberId}/account/access`, { permissions: matrix });
+      const T = window.__pt, body = {};
+      accReadTabs();
+      const menusNow = el.querySelector('#maDefault').checked ? null : [...el.querySelectorAll('#maList input:checked')].map(i => i.value).sort();
+      if(accJson(menusNow) !== accJson(acct.menus ? [...acct.menus].sort() : null)) body.menus = menusNow;
+      let permsNow = null;
+      if(!el.querySelector('#pmDefault').checked){ permsNow = {}; el.querySelectorAll('#pmGrid input[data-r]:checked').forEach(i => { (permsNow[i.dataset.r] ||= []).push(i.dataset.a); }); }
+      // custom matrices are compared with what the login effectively has today; switching from the role template to a custom matrix is always sent
+      if(permsNow === null ? acct.permissions !== null : (acct.permissions === null || accJson(accNormMatrix(permsNow)) !== accJson(accNormMatrix(acct.effectivePermissions)))) body.permissions = permsNow;
+      const idsNow = [...el.querySelectorAll('#paList input:checked')].map(i => Number(i.value));
+      if(accJson([...idsNow].sort((a, b) => a - b)) !== accJson([...acct.projectIds].sort((a, b) => a - b))) body.projectIds = idsNow;
+      const tabChanges = {};
+      idsNow.forEach(pid => { const now = T.state[pid] === undefined ? null : T.state[pid]; if(accJson(accNormMatrix(now)) !== accJson(original[pid] === undefined ? null : original[pid])) tabChanges[pid] = now; });
+      if(Object.keys(tabChanges).length) body.projectPermissions = tabChanges;
+      if(!Object.keys(body).length) return Promise.resolve({ unchanged: true });
+      return api.put(`/api/team-members/${memberId}/account/access`, body);
     }
   });
-  if(res){ showToast('Permissions saved. They take effect within a minute.'); loadUserAccounts(); }
-  window.__pmCatalog = null;
+  window.__pt = null;
+  if(res && !res.unchanged){ showToast('Access saved. It takes effect within a minute.'); loadUserAccounts(); }
 }
-// behaviour of the permission editor's own controls (event delegation — the dialog is created on demand)
+// the old entry points (links on the account row) now open the one dialog on the matching tab
+const editMenuAccess = id => editAccess(id, 'menus');
+const editPermissions = id => editAccess(id, 'permissions');
+const editProjectAccess = id => editAccess(id, 'projects');
+const editProjectTabAccess = id => editAccess(id, 'ptabs');
+
+/* ---- the dialog's own behaviour (event delegation — the dialog is created on demand) ---- */
+function accShowTab(key){
+  document.querySelectorAll('#acTabs .ac-tab').forEach(b => b.classList.toggle('on', b.dataset.ac === key));
+  document.querySelectorAll('.ac-pane').forEach(p => { p.hidden = p.dataset.acPane !== key; });
+  if(key === 'ptabs') ptSyncProjects();
+}
+function accReadTabs(){ ptRead(); }
+document.addEventListener('click', e => {
+  const t = e.target.closest && e.target.closest('.ac-tab');
+  if(t) accShowTab(t.dataset.ac);
+});
+// when the dialog opens straight onto Project tabs, fill it in
+new MutationObserver(() => {
+  const on = document.querySelector('#acTabs .ac-tab.on');
+  if(window.__pt && on && on.dataset.ac === 'ptabs' && !document.querySelector('#ptProject option')) ptSyncProjects();
+}).observe(document.body, { childList: true, subtree: true });
 document.addEventListener('change', async e => {
   const t = e.target;
   if(t.id === 'pmDefault'){
     document.querySelectorAll('#pmGrid input').forEach(i => { i.disabled = t.checked; });
   }else if(t.dataset && t.dataset.row){
     document.querySelectorAll(`#pmGrid input[data-r="${t.dataset.row}"]`).forEach(i => { i.checked = t.checked; });
+  }else if(t.id === 'maDefault'){
+    document.querySelectorAll('#maList input').forEach(i => { i.disabled = t.checked; if(t.checked) i.checked = true; });
+  }else if(t.closest && t.closest('#paList')){
+    if(document.querySelector('.ac-pane[data-ac-pane="ptabs"]:not([hidden])')) ptSyncProjects();
   }
 });
 document.addEventListener('click', async e => {
@@ -439,52 +571,6 @@ document.addEventListener('click', async e => {
   document.querySelectorAll('#pmGrid input').forEach(i => { i.disabled = false; });
   document.querySelectorAll('#pmGrid input[data-r]').forEach(i => { i.checked = (tpl[i.dataset.r] || []).includes(i.dataset.a); });
 });
-async function editMenuAccess(memberId){
-  const m = teamMembersMaster.find(x => x.id === memberId);
-  const accounts = await api.get('/api/user-accounts');
-  const acct = accounts.find(a => a.teamMemberId === memberId);
-  const menus = sidebarMenus();
-  const chosen = new Set(acct.menus || menus.map(x => x.key));
-  let lastGroup = '';
-  const res = await appDialog({
-    title: `Menu access — ${m.name}`, confirmText: 'Save menus',
-    html: `<div class="appr-note">Choose which menus ${esc(m.name)} sees. My Approvals is always available. Hiding Risk Register / Risk Analytics, Issue Log or Milestones also blocks that data on the server; other menus are hidden from the screen.</div>
-      <label class="appr-proj-list" style="display:flex;margin:0 0 6px;"><input type="checkbox" id="maDefault" ${acct.menus ? '' : 'checked'}> <span><strong>Use the role default</strong> — every menu</span></label>
-      <div class="appr-proj-list" id="maList">${menus.map(x => {
-        const head = x.group !== lastGroup ? `<div class="appr-muted" style="margin-top:8px;font-weight:700;text-transform:uppercase;">${esc(x.group)}</div>` : '';
-        lastGroup = x.group;
-        return `${head}<label><input type="checkbox" value="${x.key}" ${chosen.has(x.key) ? 'checked' : ''}> <span>${esc(x.label)}</span></label>`;
-      }).join('')}</div>`,
-    onConfirm: el => api.put(`/api/team-members/${memberId}/account/access`, {
-      menus: el.querySelector('#maDefault').checked ? null : [...el.querySelectorAll('#maList input:checked')].map(i => i.value)
-    })
-  });
-  if(res){ showToast('Menu access saved. It takes effect within a minute.'); loadUserAccounts(); }
-}
-document.addEventListener('change', e => {
-  if(e.target.id !== 'maDefault') return;
-  document.querySelectorAll('#maList input').forEach(i => { i.disabled = e.target.checked; if(e.target.checked) i.checked = true; });
-});
-async function editProjectAccess(memberId){
-  const m = teamMembersMaster.find(x => x.id === memberId);
-  const accounts = await api.get('/api/user-accounts');
-  const acct = accounts.find(a => a.teamMemberId === memberId);
-  const chosen = new Set(acct.projectIds);
-  const list = [...projects].sort((a, b) => String(a.code).localeCompare(String(b.code)));
-  const res = await appDialog({
-    title: `Project access — ${m.name}`, confirmText: 'Save access', size: 'modal-lg',
-    html: `<div class="appr-note">${esc(ROLE_LABEL[acct.role])}: can ${acct.role === 'read_only' ? 'view' : 'view and edit'} only the projects ticked here.</div>
-      <div style="display:flex;gap:8px;align-items:center;">
-        <input class="form-control" id="paSearch" placeholder="Search projects…">
-        <button type="button" class="btn btn-outline-secondary btn-sm" id="paAll">Select shown</button>
-        <button type="button" class="btn btn-outline-secondary btn-sm" id="paNone">Clear shown</button>
-      </div>
-      <div class="appr-proj-list" id="paList">${list.map(p => `<label data-q="${esc((p.code + ' ' + p.name).toLowerCase())}"><input type="checkbox" value="${p.id}" ${chosen.has(p.id) ? 'checked' : ''}> <span><strong>${esc(p.code)}</strong> — ${esc(p.name)}</span></label>`).join('')}</div>
-      <div class="appr-muted" style="margin-top:6px;" id="paCount"></div>`,
-    onConfirm: el => api.put(`/api/team-members/${memberId}/account/access`, { projectIds: [...el.querySelectorAll('#paList input:checked')].map(i => Number(i.value)) })
-  });
-  if(res){ showToast('Project access saved. It takes effect within a minute.'); loadUserAccounts(); }
-}
 document.addEventListener('input', e => {
   if(e.target.id !== 'paSearch') return;
   const q = e.target.value.trim().toLowerCase();
@@ -493,6 +579,48 @@ document.addEventListener('input', e => {
 document.addEventListener('click', e => {
   if(e.target.id !== 'paAll' && e.target.id !== 'paNone') return;
   document.querySelectorAll('#paList label').forEach(l => { if(l.style.display !== 'none') l.querySelector('input').checked = e.target.id === 'paAll'; });
+});
+
+/* ---- Project tabs ---- */
+// lists the projects currently ticked on the Projects tab; keeps what was set for each in window.__pt.state
+function ptSyncProjects(){
+  const T = window.__pt, sel = document.getElementById('ptProject'); if(!T || !sel) return;
+  ptRead();
+  const ticked = new Set([...document.querySelectorAll('#paList input:checked')].map(i => Number(i.value)));
+  const list = projects.filter(p => ticked.has(p.id)).sort((a, b) => String(a.code).localeCompare(String(b.code)));
+  document.getElementById('ptEmpty').hidden = list.length > 0; document.getElementById('ptBody').hidden = list.length === 0;
+  if(!list.length){ T.current = null; return; }
+  list.forEach(p => { if(T.state[p.id] === undefined) T.state[p.id] = null; });
+  if(!list.some(p => p.id === T.current)) T.current = list[0].id;
+  sel.innerHTML = list.map(p => `<option value="${p.id}" ${p.id === T.current ? 'selected' : ''}>${esc(p.code)} — ${esc(p.name)}</option>`).join('');
+  ptDraw();
+}
+function ptDraw(){
+  const T = window.__pt, grid = document.getElementById('ptGrid'); if(!T || !grid || T.current == null) return;
+  const custom = T.state[T.current] !== null && T.state[T.current] !== undefined, mx = custom ? T.state[T.current] : T.own;
+  const have = r => (mx[r] !== undefined ? mx[r] : (T.own[r] || [])); // a tab missing from a saved override still follows the login's own permissions
+  document.getElementById('ptDefault').checked = !custom;
+  grid.innerHTML = `<table class="dash-table"><thead><tr><th>Tab</th>${T.actions.map(a => `<th class="text-center">${ACT_LABEL[a]}</th>`).join('')}</tr></thead><tbody>
+    ${T.tabs.map(t => `<tr><td>${esc(t.label)}</td>${T.actions.map(a => t.res.actions.includes(a)
+      ? `<td class="text-center"><input type="checkbox" data-pt-r="${t.resource}" data-pt-a="${a}" ${have(t.resource).includes(a) ? 'checked' : ''} ${custom && !(t.resource === 'projects' && a === 'view') ? '' : 'disabled'}></td>` : '<td></td>').join('')}</tr>`).join('')}
+    </tbody></table>${custom ? '<div class="appr-muted">Project Brief “View” cannot be changed per project — it follows the Permissions tab. Remove the project on the Projects tab to hide it completely.</div>' : ''}`;
+}
+function ptRead(){
+  const T = window.__pt; if(!T || T.current == null || T.state[T.current] === null || T.state[T.current] === undefined) return;
+  if(!document.querySelector('#ptGrid input[data-pt-r]')) return; // the grid has not been drawn yet
+  const m = {}; T.tabs.forEach(t => { m[t.resource] = []; });
+  document.querySelectorAll('#ptGrid input[data-pt-r]').forEach(i => { if(i.checked) m[i.dataset.ptR].push(i.dataset.ptA); });
+  if((T.own.projects || []).includes('view') && !m.projects.includes('view')) m.projects.unshift('view'); // the Brief's view is never changed here
+  T.state[T.current] = m;
+}
+document.addEventListener('change', e => {
+  const T = window.__pt, t = e.target; if(!T || !t) return;
+  if(t.id === 'ptProject'){ ptRead(); T.current = Number(t.value); ptDraw(); }
+  else if(t.id === 'ptDefault'){
+    if(t.checked) T.state[T.current] = null;
+    else T.state[T.current] = Object.fromEntries(T.tabs.map(x => [x.resource, (T.own[x.resource] || []).slice()])); // start from what they have today
+    ptDraw();
+  } else if(t.dataset && t.dataset.ptR) ptRead();
 });
 async function renameAccount(memberId, current){
   const m = teamMembersMaster.find(x => x.id === memberId);
@@ -544,6 +672,37 @@ function applyMenus(allowed){
   };
 }
 
+/* ---------- what each page lets this login do (from its permission matrix) ----------
+   Each page that creates / edits / deletes records is tied to a row of the matrix. A page is marked crud-nocreate / crud-noedit /
+   crud-nodelete when the login lacks that action (CSS hides the matching buttons, and keeps them hidden when the page redraws);
+   a page whose "View" is missing disappears from the sidebar. The server refuses the action anyway — this only stops the buttons
+   from being offered. The Projects register is the exception for Edit / Delete: those follow the project's own per-project rights. */
+const CRUD_PAGES = { 'master-governorates': 'locations', 'master-types': 'project_types', 'master-contractors': 'contractors', 'master-business-units': 'business_units',
+  'master-team-members': 'team_members', 'risks-crud': 'risks', 'issues-crud': 'issues', 'milestones-crud': 'milestones', 'master-projects': 'projects', 'reports': 'reports' };
+function canOnProject(resource, action, projectId){
+  const u = currentUser; if(!u || u.isAdmin) return true;
+  const o = (u.projectPerms || {})[projectId], own = u.permissions || {};
+  return ((o && o[resource] !== undefined ? o[resource] : own[resource]) || []).includes(action);
+}
+function applyCrudGates(user){
+  if(!user || user.isAdmin) return;
+  const perms = user.permissions || {};
+  Object.entries(CRUD_PAGES).forEach(([tab, resource]) => {
+    const has = a => (perms[resource] || []).includes(a), pane = document.getElementById('tab-' + tab);
+    if(pane){
+      pane.classList.toggle('crud-nocreate', !has('create'));
+      if(tab !== 'master-projects'){ pane.classList.toggle('crud-noedit', !has('edit')); pane.classList.toggle('crud-nodelete', !has('delete')); }
+    }
+    const link = document.querySelector(`#sidebarNav .side-link[data-tab="${tab}"]`);
+    if(link && !has('view')) link.hidden = true;
+  });
+  document.querySelectorAll('#sidebarNav .nav-section-label').forEach(label => {
+    let el = label.nextElementSibling, any = false;
+    while(el && !el.classList.contains('nav-section-label')){ if(el.classList.contains('side-link') && !el.hidden) any = true; el = el.nextElementSibling; }
+    label.style.display = any ? '' : 'none';
+  });
+}
+
 /* ---------- start-up: who am I, nav visibility, forced password change ---------- */
 userReady.then(user => {
   if(!user) return;
@@ -555,6 +714,7 @@ userReady.then(user => {
   if(user.mustChangePassword){ openChangePassword(true); return; }
   const allowedMenus = user.isAdmin ? null : new Set(user.menus || []);
   if(allowedMenus) applyMenus(allowedMenus);
+  applyCrudGates(user);
   if(user.role === 'approver' || (allowedMenus && allowedMenus.size === 0)){
     // Nothing but their worklist: the dashboard data is never loaded for them.
     document.body.classList.add('role-approver');

@@ -17,6 +17,7 @@
 const { BLOCKS, REPORTS, LAYOUTS, PERIODS, userCan, resolvePeriod, diff, day } = require('./reports-blocks');
 const { buildWorkbook } = require('./reports-excel');
 const acl = require('./access');
+const PC = require('./public/progress-calc.js');
 
 const OMAN_MS = 4 * 3600 * 1000;
 const clean = (v, n = 200) => String(v == null ? '' : v).trim().slice(0, n);
@@ -26,7 +27,7 @@ const httpError = (status, message) => Object.assign(new Error(message), { statu
 const refOf = r => `RPT-${String(r.generated_at || '').slice(0, 4) || new Date().getFullYear()}-${String(r.id).padStart(4, '0')}`;
 
 module.exports = function registerReports(app, d) {
-  const { db, sessionUser, logAudit, projectScope, listProjects, listEvents, listRisks, listIssues, listMilestones, loadSubcontractorFacts, STAGES, crewLineCost, SubPerf, omanToday } = d;
+  const { db, sessionUser, logAudit, projectScope, listProjects, listEvents, listRisks, listIssues, listMilestones, loadSubcontractorFacts, loadEventSubs, STAGES, crewLineCost, SubPerf, omanToday } = d;
 
   /* ---------- people ---------- */
   const me = req => sessionUser(req);
@@ -34,8 +35,10 @@ module.exports = function registerReports(app, d) {
     const a = await db.prepare(`SELECT ua.*, tm.name AS member_name FROM user_accounts ua JOIN team_members tm ON tm.id = ua.team_member_id
       WHERE LOWER(ua.username) = ? AND ua.active = 1`).get(String(username || '').toLowerCase());
     if (!a) return null;
-    const projectIds = (await db.prepare('SELECT project_id FROM user_project_access WHERE team_member_id = ?').all(a.team_member_id)).map(r => r.project_id);
-    return { username: a.username, isAdmin: false, displayName: a.member_name, teamMemberId: a.team_member_id, projectIds,
+    const access = await db.prepare('SELECT project_id, permissions FROM user_project_access WHERE team_member_id = ?').all(a.team_member_id);
+    const projectIds = access.map(r => r.project_id), projectPerms = {};
+    access.forEach(r => { const o = acl.parseOverride(r.permissions); if (o) projectPerms[r.project_id] = o; });
+    return { username: a.username, isAdmin: false, displayName: a.member_name, teamMemberId: a.team_member_id, projectIds, projectPerms,
       menus: acl.effectiveMenus(a.role, a.menus), permissions: acl.effectivePermissions(a.role, a.permissions) };
   }
   const allowOf = u => ({
@@ -59,6 +62,9 @@ module.exports = function registerReports(app, d) {
       blocks: Array.isArray(raw.blocks) ? raw.blocks.map(b => clean(Array.isArray(b) ? b[0] : b, 40)).filter(Boolean).slice(0, 40) : [],
       options: Array.isArray(raw.options) ? raw.options.map(o => clean(o, 40)).slice(0, 10) : [],
       layout: LAYOUTS.some(l => l.key === raw.layout) ? raw.layout : '',
+      // optional narrowing to some subcontractors (0 = events with no subcontractor) and / or event names — used by the progress reports
+      subcontractorIds: [...new Set((Array.isArray(raw.subcontractorIds) ? raw.subcontractorIds : []).map(Number).filter(n => Number.isInteger(n) && n >= 0 && n <= 2147483647))].slice(0, 200),
+      eventNames: [...new Set((Array.isArray(raw.eventNames) ? raw.eventNames : []).map(s => clean(s, 200)).filter(Boolean))].slice(0, 50),
       businessUnitIds: ids(raw.businessUnitIds), projectIds: ids(raw.projectIds), statuses: (Array.isArray(raw.statuses) ? raw.statuses : []).map(s => clean(s, 40)).filter(Boolean).slice(0, 12),
       period: { preset: PERIODS.some(p => p.key === per.preset) ? per.preset : '', from: clean(per.from, 10), to: clean(per.to, 10) }
     };
@@ -81,7 +87,7 @@ module.exports = function registerReports(app, d) {
   }
 
   /* ---------- the data a report reads (loaded on demand, once per run) ---------- */
-  function makeContext(user, scopeProjects, period, today) {
+  function makeContext(user, scopeProjects, period, today, filter) {
     const idList = scopeProjects.map(p => p.id);
     const memo = fn => { let p; return () => (p ||= fn()); };
     const q = (sql, ...extra) => db.prepare(sql).all(idList, ...extra);
@@ -90,12 +96,15 @@ module.exports = function registerReports(app, d) {
     // only to logins that may see all of them — a report built by an administrator can quote risk counts in a summary strip.
     const allow = new Proxy(baseAllow, { get: (t, k) => { if (t[k]) allowUsed.add(k); return t[k]; } });
     const c = {
-      user, today, period, ids: idList, allow, allowUsed, STAGES, SubPerf, crewLineCost, opts: {},
+      user, today, period, ids: idList, allow, allowUsed, STAGES, SubPerf, crewLineCost, opts: {}, filter: filter || null,
       projects: memo(() => listProjects(idList)),
-      events: memo(() => listEvents(idList)),
+      events: memo(async () => (filter ? PC.filterEvents(await listEvents(idList), filter.subs, filter) : listEvents(idList)).then(list => list.filter(e => acl.canOn(user, 'events', 'view', e.projectId)))),
       risks: memo(() => listRisks(null, idList)),
       issues: memo(() => listIssues(null, idList)),
       milestones: memo(() => listMilestones(null, idList)),
+      // which subcontractor(s) carry each Sequence-of-Events line: a crew / labour line names its event and its sub contractor
+      eventCrews: memo(async () => (await q(`SELECT pc.event_id, pc.project_id, pc.contractor_id, ct.name AS contractor FROM project_crews pc JOIN contractors ct ON ct.id = pc.contractor_id
+        WHERE pc.event_id IS NOT NULL AND pc.project_id = ANY(?::int[]) ORDER BY ct.name`)).filter(r => acl.canOn(user, 'events', 'view', r.project_id))),
       costLines: memo(async () => ({
         materials: await q('SELECT project_id, stage, material_name, supplier, status, planned_qty, consumed_qty, unit_rate, delivery_date FROM project_materials WHERE project_id = ANY(?::int[])'),
         crews: await q('SELECT project_id, stage, quantity, actual_qty, rate_basis, unit_rate, allocated_days FROM project_crews WHERE project_id = ANY(?::int[])')
@@ -171,11 +180,24 @@ module.exports = function registerReports(app, d) {
     const today = omanToday();
     const period = resolvePeriod(input.period.preset || (def && def.period) || 'last-month', input.period.from, input.period.to, today);
     if (!period) throw httpError(400, 'Choose a valid period (for custom dates, the end must not be before the start)');
-    const { visible, projects } = await resolveScope(user, input);
+    const resolved = await resolveScope(user, input), visible = resolved.visible;
+    let projects = resolved.projects;
     if (!projects.length) throw httpError(400, 'No projects match the selected business units, projects and status');
     if (projects.length > 300) throw httpError(400, 'Too many projects for one report — narrow the selection to 300 or fewer');
 
-    const c = makeContext(user, projects, period, today);
+    // Subcontractor / event filter: keep only the matching events, and only the projects that have one
+    let filter = null, filterLabel = '';
+    if (input.subcontractorIds.length || input.eventNames.length) {
+      const subs = input.subcontractorIds.length ? await loadEventSubs(projects.map(p => p.id)) : {};
+      const kept = PC.filterEvents(await listEvents(projects.map(p => p.id)), subs, input);
+      projects = projects.filter(p => kept.some(e => e.projectId === p.id));
+      if (!projects.length) throw httpError(400, 'No events match the selected subcontractor / event filter in these projects');
+      filter = { subs, subcontractorIds: input.subcontractorIds, eventNames: input.eventNames };
+      const nameOf = new Map(Object.values(subs).flat().map(x => [x[0], x[1]]));
+      const subText = input.subcontractorIds.map(i => (i === 0 ? 'no subcontractor' : nameOf.get(i) || `#${i}`)).join(', ');
+      filterLabel = [subText && `subcontractor: ${subText}`, input.eventNames.length && `event: ${input.eventNames.join(', ')}`].filter(Boolean).join(' · ');
+    }
+    const c = makeContext(user, projects, period, today, filter);
     const sections = [];
     for (const s of okBlocks) {
       try { sections.push(...await BLOCKS[s.key].build({ ...c, opts: s.opts })); }
@@ -190,7 +212,7 @@ module.exports = function registerReports(app, d) {
     const brandBu = scopeBus.length === 1 ? bus.find(b => b.id === scopeBus[0]) : bus.find(b => /^nec$/i.test(b.name)) || null;
     const layout = input.layout || (def && def.layout) || 'standard';
     const title = input.title || (def ? def.title : 'Custom report');
-    const label = scopeLabel(projects, visible, input);
+    const label = scopeLabel(projects, visible, input) + (filterLabel ? ` — ${filterLabel}` : '');
     const doc = {
       v: 1, key: def ? def.key : 'custom', title, category: def ? def.category : 'Custom', layout, today, generatedAt: new Date().toISOString(),
       generatedBy: user.displayName || user.username, period, scope: { label, projectCount: projects.length, projects: projects.slice(0, 60).map(p => ({ id: p.id, code: p.code, name: p.name, businessUnit: p.businessUnit, status: p.status })),
@@ -200,7 +222,7 @@ module.exports = function registerReports(app, d) {
     };
     const snapshot = JSON.stringify(doc);
     const idList = projects.map(p => p.id).sort((a, b) => a - b);
-    const sig = `${doc.key}|${idList.join(',')}|${def ? '' : okBlocks.map(s => s.key).join(',')}`;
+    const sig = `${doc.key}|${idList.join(',')}|${def ? '' : okBlocks.map(s => s.key).join(',')}${filterLabel ? '|' + filterLabel : ''}`;
     const version = ((await db.prepare('SELECT COUNT(*) AS n FROM report_runs WHERE scope_sig = ?').get(sig)).n || 0) + 1;
     const params = { ...input, blocks: okBlocks.map(s => s.key), omitted: omitted.map(o => o.title), periodResolved: { from: period.from, to: period.to }, allowUsed: [...c.allowUsed] };
     const info = await db.prepare(`INSERT INTO report_runs (report_key, title, category, version, scope_sig, source, schedule_id, definition_id, layout, params, scope_label, project_count,
@@ -229,7 +251,7 @@ module.exports = function registerReports(app, d) {
     projectCount: r.project_count, periodFrom: r.period_from, periodTo: r.period_to, asOf: r.as_of, generatedBy: r.generated_by_name || r.generated_by, generatedByUser: r.generated_by, generatedAt: r.generated_at,
     sizeKb: Math.max(1, Math.round((r.size_bytes || 0) / 1024)), blocks: parseJson(r.params, {}).blocks || [],
     input: (p => ({ reportKey: r.report_key, definitionId: p.definitionId || null, title: p.title || '', blocks: p.blocks || [], options: p.options || [], layout: r.layout, businessUnitIds: p.businessUnitIds || [],
-      projectIds: p.projectIds || [], statuses: p.statuses || [], period: { preset: 'custom', from: r.period_from, to: r.period_to } }))(parseJson(r.params, {})) });
+      projectIds: p.projectIds || [], statuses: p.statuses || [], subcontractorIds: p.subcontractorIds || [], eventNames: p.eventNames || [], period: { preset: 'custom', from: r.period_from, to: r.period_to } }))(parseJson(r.params, {})) });
 
   function audit(req, action, run, details) {
     return logAudit(req, { action, entityType: 'Report', entityId: run.id, entityLabel: `${run.ref || refOf(run)} · ${run.title}`, details });

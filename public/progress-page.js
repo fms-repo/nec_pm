@@ -6,7 +6,7 @@
 (function () {
   'use strict';
   const PC = window.ProgressCalc;
-  const S = { scope: '', period: 'Month', weeks: 3, laLimit: 40 };
+  const S = { scope: '', period: 'Month', weeks: 3, laLimit: 40, sub: '', event: '', subs: null, subsAt: 0 };
   const COLORS = { planned: '#8A97A0', actual: '#1B7A8C', earned: '#C9A15A', good: '#2E8B57', bad: '#C94C4C' };
   const sign = v => (v > 0 ? '+' : v < 0 ? '−' : '') + Math.abs(v);
   const fd = s => (s ? fmtDate(s) : '—');
@@ -19,11 +19,30 @@
   function scopeProjects(list) { return S.scope ? list.filter(p => String(p.id) === String(S.scope)) : list; }
   function periodIso() { const b = periodBounds(S.period, null); return { from: toDateInput(b.start), to: toDateInput(b.end) }; }
 
-  function render(list) {
+  // which subcontractor(s) carry each event comes from the crew / labour lines; fetched here (kept for 20 s) because the dashboard does not load it
+  async function render(list) {
+    if (!S.subs || Date.now() - S.subsAt > 20000) {
+      try { S.subs = (await api.get('/api/progress/event-subcontractors')).events || {}; } catch (e) { S.subs = S.subs || {}; }
+      S.subsAt = Date.now();
+    }
+    draw(list);
+  }
+
+  function draw(list) {
     const el = document.getElementById('tab-progress');
     if (S.scope && !list.some(p => String(p.id) === String(S.scope))) S.scope = '';
-    const sp = scopeProjects(list), ids = new Set(sp.map(p => p.id));
-    const ev = events.filter(e => ids.has(e.projectId)), per = periodIso();
+    const sp0 = scopeProjects(list), ids0 = new Set(sp0.map(p => p.id));
+    const evScope = events.filter(e => ids0.has(e.projectId));
+    // Subcontractor / Event filters: choices come from the events in the chosen project scope; the event list narrows to the chosen subcontractor
+    const subOpts = new Map(); let hasNone = false;
+    evScope.forEach(e => { const s = S.subs[e.id]; if (s && s.length) s.forEach(x => subOpts.set(String(x[0]), x[1])); else hasNone = true; });
+    if (S.sub !== '' && !(S.sub === '0' ? hasNone : subOpts.has(S.sub))) S.sub = '';
+    const subF = S.sub === '' ? [] : [Number(S.sub)];
+    const eventNames = [...new Set(PC.filterEvents(evScope, S.subs, { subcontractorIds: subF }).map(e => e.eventName))].sort((a, b) => a.localeCompare(b));
+    if (S.event && !eventNames.includes(S.event)) S.event = '';
+    const flt = { subcontractorIds: subF, eventNames: S.event ? [S.event] : [] }, filtered = !!(subF.length || S.event);
+    const ev = PC.filterEvents(evScope, S.subs, flt), per = periodIso();
+    const sp = filtered ? sp0.filter(p => ev.some(e => e.projectId === p.id)) : sp0; // with a filter, only projects that have a matching event are measured
     const an = PC.analyse(sp, ev, { from: per.from, to: per.to });
     const P = an.portfolio, single = sp.length === 1;
     const canReports = !!document.querySelector('.side-link[data-tab="reports"]');
@@ -35,14 +54,20 @@
         <div class="pg-actions">
           <a class="sp-btn" id="pgXlsx" href="#" title="Planned vs actual for every activity"><i class="bi bi-file-earmark-excel"></i>Measurement sheet</a>
           ${canReports ? `<button type="button" class="sp-btn" id="pgRepProgress" title="Weekly / monthly progress report — opens a printable PDF"><i class="bi bi-file-earmark-pdf"></i>Progress report</button>
-          <button type="button" class="sp-btn" id="pgRepSlip" title="Where schedule was lost and recovered"><i class="bi bi-file-earmark-pdf"></i>Slippage report</button>` : ''}
+          <button type="button" class="sp-btn" id="pgRepSlip" title="Where schedule was lost and recovered"><i class="bi bi-file-earmark-pdf"></i>Slippage report</button>
+          <button type="button" class="sp-btn" id="pgRepSub" title="Progress of each subcontractor and the events they carry"><i class="bi bi-people"></i>By subcontractor</button>
+          <button type="button" class="sp-btn" id="pgRepEvent" title="Progress of every event in the Sequence of Events"><i class="bi bi-list-check"></i>By event</button>` : ''}
         </div>
       </div>
       <div class="pg-bar">
         <div class="pg-f"><label>Show</label><select id="pgScope"><option value="">All projects in the current filters (${list.length})</option>${list.map(p => `<option value="${p.id}" ${String(p.id) === String(S.scope) ? 'selected' : ''}>${esc(p.code)} — ${esc(p.name.length > 60 ? p.name.slice(0, 58) + '…' : p.name)}</option>`).join('')}</select></div>
+        <div class="pg-f"><label>Subcontractor</label><select id="pgSub"><option value="">All subcontractors</option>${[...subOpts].sort((a, b) => a[1].localeCompare(b[1])).map(([id, n]) => `<option value="${id}" ${S.sub === id ? 'selected' : ''}>${esc(n)}</option>`).join('')}${hasNone ? `<option value="0" ${S.sub === '0' ? 'selected' : ''}>No subcontractor assigned</option>` : ''}</select></div>
+        <div class="pg-f"><label>Event</label><select id="pgEvent"><option value="">All events (${eventNames.length})</option>${eventNames.map(n => `<option value="${esc(n)}" ${S.event === n ? 'selected' : ''}>${esc(n.length > 60 ? n.slice(0, 58) + '…' : n)}</option>`).join('')}</select></div>
+        ${filtered ? '<a href="#" class="pg-clear" id="pgClear"><i class="bi bi-x-circle"></i> Clear filters</a>' : ''}
         <div class="pg-f"><label>Activity period</label><select id="pgPeriod">${['Week', 'Month', 'Quarter'].map(t => `<option ${S.period === t ? 'selected' : ''}>${t}</option>`).join('')}</select></div>
         <span class="pg-note"><i class="bi bi-info-circle"></i> This ${periodWord[S.period]}: ${fd(per.from)} – ${fd(per.to)}</span>
       </div>
+      ${filtered ? `<div class="pg-filt"><i class="bi bi-funnel"></i> Showing ${ev.length} event${ev.length === 1 ? '' : 's'} in ${sp.length} project${sp.length === 1 ? '' : 's'} — ${[subF.length ? 'subcontractor: <b>' + esc(S.sub === '0' ? 'none assigned' : subOpts.get(S.sub)) + '</b>' : '', S.event ? 'event: <b>' + esc(S.event) + '</b>' : ''].filter(Boolean).join(' · ')}. The figures, charts, Excel sheet and reports below all use only these events.</div>` : ''}
       ${sp.length ? `
       ${P.unmeasured || P.unscheduled ? `<div class="pg-warn"><i class="bi bi-exclamation-triangle"></i> ${[P.unmeasured ? `${P.unmeasured} of ${P.projects} project${P.unmeasured === 1 ? ' has' : 's have'} no scheduled tasks, so ${P.unmeasured === 1 ? 'it is' : 'they are'} not measured` : '', P.unscheduled ? `${P.unscheduled} task${P.unscheduled === 1 ? ' has' : 's have'} no planned start / finish date and ${P.unscheduled === 1 ? 'is' : 'are'} left out of the figures` : ''].filter(Boolean).join('; ')}. Add the dates in the project's Sequence of Events.</div>` : ''}
       <div class="pg-kpis" id="pgKpis"></div>
@@ -63,16 +88,23 @@
       <div class="table-card" style="overflow-x:auto;"><table class="dash-table"><thead><tr><th>Project</th><th class="r">Planned</th><th class="r">Actual</th><th class="r">Variance</th><th class="r">SPI</th><th>Schedule</th><th class="r">Activities done</th><th class="r">Overdue</th><th>Baseline finish</th><th>Forecast finish</th></tr></thead>
         <tbody id="pgRows"></tbody></table></div>
       <div class="pg-how"><b>How this is measured.</b> Each task is weighted by its planned duration. <i>Planned %</i> is how much of the work the schedule says should be done by today; <i>actual %</i> is the weighted progress of the tasks. <i>SPI</i> = actual ÷ planned. Days ahead / behind use earned schedule: the date on which the plan had reached today's actual %. <i>Forecast finish</i> extends the current pace to the end (planned duration ÷ SPI). Earlier months are rebuilt from the recorded actual start / finish dates, so past values are an estimate; today's are exact. This differs from the calendar-based "Planned %" on the Project Portfolio, which only measures time elapsed.</div>`
-      : `<div class="empty-state" style="margin-top:20px;">No projects match your filters.</div>`}`;
+      : `<div class="empty-state" style="margin-top:20px;">${filtered ? 'No events match the subcontractor / event filter.' : 'No projects match your filters.'}</div>`}`;
 
-    document.getElementById('pgScope').addEventListener('change', e => { S.scope = e.target.value; render(list); });
-    document.getElementById('pgPeriod').addEventListener('change', e => { S.period = e.target.value; render(list); });
+    document.getElementById('pgScope').addEventListener('change', e => { S.scope = e.target.value; draw(list); });
+    document.getElementById('pgPeriod').addEventListener('change', e => { S.period = e.target.value; draw(list); });
+    document.getElementById('pgSub').addEventListener('change', e => { S.sub = e.target.value; draw(list); });
+    document.getElementById('pgEvent').addEventListener('change', e => { S.event = e.target.value; draw(list); });
+    const clr = document.getElementById('pgClear'); if (clr) clr.addEventListener('click', e => { e.preventDefault(); S.sub = ''; S.event = ''; draw(list); });
     if (!sp.length) return;
     const q = new URLSearchParams({ projects: sp.map(p => p.id).join(','), from: per.from, to: per.to });
+    if (subF.length) q.set('subs', subF.join(','));
+    if (S.event) q.append('event', S.event);
     document.getElementById('pgXlsx').href = '/api/progress/export?' + q;
     if (canReports) {
-      document.getElementById('pgRepProgress').addEventListener('click', e => makeReport(e.currentTarget, 'progress', sp, single ? ['project-pages'] : []));
-      document.getElementById('pgRepSlip').addEventListener('click', e => makeReport(e.currentTarget, 'slippage', sp, []));
+      document.getElementById('pgRepProgress').addEventListener('click', e => makeReport(e.currentTarget, 'progress', sp, single ? ['project-pages'] : [], flt));
+      document.getElementById('pgRepSlip').addEventListener('click', e => makeReport(e.currentTarget, 'slippage', sp, [], flt));
+      document.getElementById('pgRepSub').addEventListener('click', e => makeReport(e.currentTarget, 'progress-subcontractor', sp, [], flt));
+      document.getElementById('pgRepEvent').addEventListener('click', e => makeReport(e.currentTarget, 'progress-event', sp, [], flt));
     }
     kpis(an, P, list, sp);
     scurve(an);
@@ -159,10 +191,10 @@
     document.querySelectorAll('#pgRows tr[data-id]').forEach(tr => tr.addEventListener('click', () => openProjectModal(Number(tr.dataset.id))));
   }
 
-  async function makeReport(btn, key, sp, options) {
+  async function makeReport(btn, key, sp, options, flt) {
     const w = window.open('about:blank', '_blank'), old = btn.innerHTML; btn.disabled = true; btn.innerHTML = '<i class="bi bi-hourglass-split"></i>Generating…';
     try {
-      const run = await api.post('/api/reports/runs', { reportKey: key, projectIds: sp.map(p => p.id), options, period: { preset: periodPreset[S.period] } });
+      const run = await api.post('/api/reports/runs', { reportKey: key, projectIds: sp.map(p => p.id), options, period: { preset: periodPreset[S.period] }, subcontractorIds: flt.subcontractorIds, eventNames: flt.eventNames });
       if (w) w.location.href = '/report-print.html?run=' + run.id; else showToast(`${run.ref} generated — find it in Report Library → History`);
     } catch (e) { if (w) w.close(); showToast(e.message, 'error'); }
     finally { btn.disabled = false; btn.innerHTML = old; }

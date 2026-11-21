@@ -88,14 +88,23 @@ function sessionUser(req) {
     mustChangePassword: !!s.mustChangePassword,
     role: (s.userType || 'admin') === 'admin' ? 'administrator' : (s.role || 'approver'),
     projectIds: s.projectIds || [],
+    projectPerms: s.projectPerms || {}, // { projectId: matrix } — per-project overrides, see access.js
     menus: s.menus || [],
     permissions: s.permissions || {}
   };
 }
 const publicUser = u => ({ username: u.username, userType: u.userType, isAdmin: u.isAdmin, teamMemberId: u.teamMemberId,
-  displayName: u.displayName, mustChangePassword: u.mustChangePassword, role: u.role, menus: u.menus, permissions: u.permissions });
+  displayName: u.displayName, mustChangePassword: u.mustChangePassword, role: u.role, menus: u.menus, permissions: u.permissions, projectPerms: u.projectPerms || {} });
+const acl = require('./access');
 const loadProjectIds = async teamMemberId =>
   (await db.prepare('SELECT project_id FROM user_project_access WHERE team_member_id = ?').all(teamMemberId)).map(r => r.project_id);
+// The projects a login may reach plus its per-project permission overrides (user_project_access.permissions; NULL = use the login's own matrix).
+const loadProjectAccess = async teamMemberId => {
+  const rows = await db.prepare('SELECT project_id, permissions FROM user_project_access WHERE team_member_id = ?').all(teamMemberId);
+  const projectPerms = {};
+  rows.forEach(r => { const o = acl.parseOverride(r.permissions); if (o) projectPerms[r.project_id] = o; });
+  return { projectIds: rows.map(r => r.project_id), projectPerms };
+};
 
 function requireAdmin(req, res, next) {
   const u = sessionUser(req);
@@ -152,7 +161,7 @@ app.post('/api/auth/login', async (req, res) => {
   await startSession(req, {
     username: acct.username, userType: 'user', teamMemberId: acct.team_member_id,
     displayName: acct.member_name, mustChangePassword: !!acct.must_change_password,
-    role: acct.role, projectIds: await loadProjectIds(acct.team_member_id),
+    role: acct.role, ...(await loadProjectAccess(acct.team_member_id)),
     menus: require('./access').effectiveMenus(acct.role, acct.menus),
     permissions: require('./access').effectivePermissions(acct.role, acct.permissions)
   });
@@ -191,7 +200,7 @@ app.use(async (req, res, next) => {
     req.session.role = acct.role;
     req.session.menus = require('./access').effectiveMenus(acct.role, acct.menus);
     req.session.permissions = require('./access').effectivePermissions(acct.role, acct.permissions);
-    req.session.projectIds = await loadProjectIds(req.session.teamMemberId);
+    Object.assign(req.session, await loadProjectAccess(req.session.teamMemberId));
     req.session.checkedAt = Date.now();
   }
   // First sign-in with an administrator-issued temporary password: nothing else until it is changed.
@@ -388,6 +397,20 @@ app.use(async (req, res, next) => {
 
 require('./approvals')(app, { db, logAudit, sessionUser, requireAdmin, clientIp });
 
+// Right after a project is created or saved, re-check just that project for notifications (an event past its planned
+// finish, progress more than 10 points behind plan). Runs after the response is sent and can never fail or slow the save.
+let alertScan = null; // set where notifications.js is registered, below
+app.use((req, res, next) => {
+  if (!['POST', 'PUT'].includes(req.method) || !/^\/api\/projects(\/\d+)?$/.test(req.path)) return next();
+  let body; const json = res.json.bind(res); res.json = b => { body = b; return json(b); };
+  res.on('finish', () => {
+    if (res.statusCode >= 400 || !alertScan) return;
+    const id = Number(req.path.split('/')[3]) || (body && body.id);
+    if (id) alertScan([id]).catch(err => console.error(new Date().toISOString(), 'notification check failed:', err.message));
+  });
+  next();
+});
+
 app.use(express.static(path.join(__dirname, 'public')));
 
 /* =========================================================
@@ -517,7 +540,7 @@ function serializeMaterial(row) {
   return {
     id: row.id, projectId: row.project_id, eventId: row.event_id, stage: row.stage,
     materialName: row.material_name, specification: row.specification, unit: row.unit,
-    plannedQty: row.planned_qty, consumedQty: row.consumed_qty, unitRate: row.unit_rate,
+    plannedQty: row.planned_qty, consumedQty: row.consumed_qty, progressOverride: row.progress_override ?? null, unitRate: row.unit_rate,
     supplier: row.supplier, deliveryDate: row.delivery_date, status: row.status, notes: row.notes,
     plannedAmount: +(row.planned_qty * row.unit_rate).toFixed(3),
     actualAmount: +(row.consumed_qty * row.unit_rate).toFixed(3)
@@ -538,7 +561,7 @@ function serializeCrew(row) {
     id: row.id, projectId: row.project_id, eventId: row.event_id, stage: row.stage,
     resourceType: row.resource_type, resourceName: row.resource_name,
     contractorId: row.contractor_id, contractor: row.contractor_name || null, poRef: row.po_ref || '',
-    quantity: row.quantity, actualQty: row.actual_qty || 0,
+    quantity: row.quantity, actualQty: row.actual_qty || 0, progressOverride: row.progress_override ?? null,
     rateBasis: row.rate_basis, unitRate: row.unit_rate, allocatedDays: row.allocated_days,
     startDate: row.start_date, endDate: row.end_date, status: row.status, notes: row.notes,
     cost: +cost.toFixed(3),
@@ -835,8 +858,9 @@ async function accountRow(teamMemberId) {
   return db.prepare('SELECT * FROM user_accounts WHERE team_member_id = ?').get(teamMemberId);
 }
 const ACCOUNT_ROLES = require('./access').ROLES;
-const shapeAccount = (a, projectIds) => ({
-  teamMemberId: a.team_member_id, username: a.username, role: a.role, projectIds,
+const shapeAccount = (a, projectIds, projectPermissions) => ({
+  teamMemberId: a.team_member_id, username: a.username, role: a.role, projectIds, projectPermissions: projectPermissions || {}, // { projectId: matrix } overrides
+
   menus: a.menus ? JSON.parse(a.menus) : null, // null = the role's default
   permissions: a.permissions ? JSON.parse(a.permissions) : null, // null = the role's template
   effectivePermissions: require('./access').effectivePermissions(a.role, a.permissions),
@@ -846,13 +870,17 @@ const shapeAccount = (a, projectIds) => ({
 // What the administrator's permission editor needs: the resources, actions and the role templates.
 app.get('/api/user-accounts/acl-catalog', requireAdmin, (req, res) => {
   const acl = require('./access');
-  res.json({ actions: acl.ACTIONS, resources: Object.entries(acl.RESOURCES).map(([key, r]) => ({ key, label: r.label, scoped: r.scoped })), templates: acl.TEMPLATES });
+  res.json({ actions: acl.ALL_ACTIONS, resources: Object.entries(acl.RESOURCES).map(([key, r]) => ({ key, label: r.label, scoped: r.scoped, actions: acl.actionsOf(key) })),
+    tabs: acl.PROJECT_TABS.map(([key, label, resource]) => ({ key, label, resource })), templates: acl.TEMPLATES });
 });
-const accountShape = async a => shapeAccount(a, await loadProjectIds(a.team_member_id));
+const accountShape = async a => { const pa = await loadProjectAccess(a.team_member_id); return shapeAccount(a, pa.projectIds, pa.projectPerms); };
 app.get('/api/user-accounts', requireAdmin, async (req, res) => {
-  const grants = {};
-  (await db.prepare('SELECT team_member_id, project_id FROM user_project_access').all()).forEach(g => { (grants[g.team_member_id] ||= []).push(g.project_id); });
-  res.json((await db.prepare('SELECT * FROM user_accounts ORDER BY LOWER(username)').all()).map(a => shapeAccount(a, grants[a.team_member_id] || [])));
+  const grants = {}, overrides = {};
+  (await db.prepare('SELECT team_member_id, project_id, permissions FROM user_project_access').all()).forEach(g => {
+    (grants[g.team_member_id] ||= []).push(g.project_id);
+    const o = acl.parseOverride(g.permissions); if (o) (overrides[g.team_member_id] ||= {})[g.project_id] = o;
+  });
+  res.json((await db.prepare('SELECT * FROM user_accounts ORDER BY LOWER(username)').all()).map(a => shapeAccount(a, grants[a.team_member_id] || [], overrides[a.team_member_id])));
 });
 function accountAudit(req, tm, action, details) {
   return logAudit(req, { action, entityType: 'User Account', entityId: tm.id, entityLabel: `${tm.name}${details && details.username ? ' (' + details.username + ')' : ''}`, details });
@@ -932,19 +960,38 @@ app.put('/api/team-members/:id/account/access', requireAdmin, async (req, res) =
     const found = projectIds.length ? await db.prepare('SELECT id FROM projects WHERE id = ANY(?::int[])').all(projectIds) : [];
     if (found.length !== projectIds.length) return badRequest(res, 'One or more projects do not exist');
   }
+  // Per-project permissions: { "<projectId>": matrix | null } — null puts a project back to the login's own matrix. Only for projects this login is granted.
+  let projectPermChanges = null;
+  if (b.projectPermissions !== undefined) {
+    if (!b.projectPermissions || typeof b.projectPermissions !== 'object' || Array.isArray(b.projectPermissions)) return badRequest(res, 'projectPermissions must be an object of project id to permissions');
+    projectPermChanges = [];
+    for (const [pid, m] of Object.entries(b.projectPermissions)) {
+      const id = Number(pid);
+      if (!Number.isInteger(id) || id <= 0) return badRequest(res, 'projectPermissions has an invalid project id');
+      if (m === null) { projectPermChanges.push([id, null]); continue; }
+      const clean = acl.cleanProjectMatrix(m);
+      if (!clean) return badRequest(res, 'Per-project permissions may only set the project tabs, using the actions each tab offers');
+      projectPermChanges.push([id, JSON.stringify(clean)]);
+    }
+  }
   const before = await loadProjectIds(tm.id);
+  const keptOverrides = Object.fromEntries((await db.prepare('SELECT project_id, permissions FROM user_project_access WHERE team_member_id = ?').all(tm.id)).map(r => [r.project_id, r.permissions]));
+  if (projectPermChanges && projectPermChanges.some(([id]) => !(projectIds || before).includes(id))) return badRequest(res, 'Per-project permissions can only be set on projects granted to this login');
   await db.transaction(async () => {
     await db.prepare('UPDATE user_accounts SET role = ? WHERE team_member_id = ?').run(role, tm.id);
     if (menusJson !== undefined) await db.prepare('UPDATE user_accounts SET menus = ? WHERE team_member_id = ?').run(menusJson, tm.id);
     if (permsJson !== undefined) await db.prepare('UPDATE user_accounts SET permissions = ? WHERE team_member_id = ?').run(permsJson, tm.id);
     if (projectIds) {
       await db.prepare('DELETE FROM user_project_access WHERE team_member_id = ?').run(tm.id);
-      for (const pid of projectIds) await db.prepare('INSERT INTO user_project_access (team_member_id, project_id, granted_by) VALUES (?, ?, ?)').run(tm.id, pid, sessionUser(req).username);
+      // a project that stays granted keeps its per-project permissions
+      for (const pid of projectIds) await db.prepare('INSERT INTO user_project_access (team_member_id, project_id, granted_by, permissions) VALUES (?, ?, ?, ?)').run(tm.id, pid, sessionUser(req).username, keptOverrides[pid] || null);
     }
+    for (const [pid, json] of projectPermChanges || []) await db.prepare('UPDATE user_project_access SET permissions = ? WHERE team_member_id = ? AND project_id = ?').run(json, tm.id, pid);
   })();
   const after = projectIds || before;
   await accountAudit(req, tm, 'account_access', {
     username: acct.username, role: acct.role === role ? role : `${acct.role} → ${role}`,
+    ...(projectPermChanges ? { projectPermissions: projectPermChanges.map(([id, j]) => `project ${id}: ${j === null ? 'login default' : 'custom'}`) } : {}),
     projectsAdded: after.filter(x => !before.includes(x)).length, projectsRemoved: before.filter(x => !after.includes(x)).length, projectCount: after.length,
     ...(menusJson !== undefined ? { menus: menusJson === null ? 'role default' : `${JSON.parse(menusJson).length} menus` } : {}),
     ...(permsJson !== undefined ? { permissions: permsJson === null ? 'role template' : Object.entries(JSON.parse(permsJson)).filter(([, v]) => v.length).map(([k, v]) => `${k}: ${v.join('/')}`) } : {})
@@ -1040,6 +1087,21 @@ function entryDateProblems(materials, crews) {
   });
   return out;
 }
+// A line's Progress % is normally automatic (actual / planned). A typed value is kept as an override; blank / missing = automatic (null).
+function sanitizeProgressOverride(v) {
+  if (v == null || String(v).trim() === '' || !isFinite(Number(v))) return null;
+  return Math.max(0, Math.min(100, Math.round(Number(v) * 10) / 10));
+}
+// An event that has material / crew lines takes its Progress % from them: the average of the lines' Progress %
+// (override if set, otherwise actual / planned). Events without measurable lines keep the value typed on the event.
+// Runs after the rows are sanitized and before the project's own Actual Progress is rolled up.
+function deriveEventProgress(events, materials, crews) {
+  const PCalc = require('./public/progress-calc.js'), by = {};
+  const add = (cid, v) => { if (cid != null) (by[cid] ||= []).push(v); };
+  materials.forEach(m => add(m.client_event_id, PCalc.lineProgress(m.planned_qty, m.consumed_qty, m.progress_override)));
+  crews.forEach(c => add(c.client_event_id, PCalc.lineProgress(c.quantity, c.actual_qty, c.progress_override)));
+  events.forEach(e => { if (e.client_id == null) return; const avg = PCalc.averageProgress(by[e.client_id]); if (avg != null) e.progress_pct = avg; });
+}
 function sanitizeMaterialRows(rows) {
   if (!Array.isArray(rows)) return [];
   return rows
@@ -1052,6 +1114,7 @@ function sanitizeMaterialRows(rows) {
       unit: r.unit ? String(r.unit).trim() : null,
       planned_qty: Number(r.plannedQty) || 0,
       consumed_qty: Number(r.consumedQty) || 0,
+      progress_override: sanitizeProgressOverride(r.progressOverride),
       unit_rate: omr3(r.unitRate),
       supplier: r.supplier ? String(r.supplier).trim() : null,
       delivery_date: r.deliveryDate || null,
@@ -1100,6 +1163,7 @@ function sanitizeCrewRows(rows) {
       po_ref: (typeof r.poRef === 'string' && r.poRef.trim().slice(0, 200)) || null,
       quantity: Number(r.quantity) || 0,
       actual_qty: Number(r.actualQty) || 0,
+      progress_override: sanitizeProgressOverride(r.progressOverride),
       rate_basis: pickEnum(r.rateBasis, RATE_BASES, RATE_BASES[0]),
       unit_rate: omr3(r.unitRate),
       allocated_days: Number(r.allocatedDays) || 0,
@@ -1180,11 +1244,11 @@ function computeProjectExpectedDelay(events, endDate) {
 }
 
 const insertMaterialStmt = db.prepare(`INSERT INTO project_materials
-  (project_id, event_id, stage, material_name, specification, unit, planned_qty, consumed_qty, unit_rate, supplier, delivery_date, status, notes)
-  VALUES (@project_id, @event_id, @stage, @material_name, @specification, @unit, @planned_qty, @consumed_qty, @unit_rate, @supplier, @delivery_date, @status, @notes)`);
+  (project_id, event_id, stage, material_name, specification, unit, planned_qty, consumed_qty, progress_override, unit_rate, supplier, delivery_date, status, notes)
+  VALUES (@project_id, @event_id, @stage, @material_name, @specification, @unit, @planned_qty, @consumed_qty, @progress_override, @unit_rate, @supplier, @delivery_date, @status, @notes)`);
 const insertCrewStmt = db.prepare(`INSERT INTO project_crews
-  (project_id, event_id, stage, resource_type, resource_name, contractor_id, po_ref, quantity, actual_qty, rate_basis, unit_rate, allocated_days, start_date, end_date, status, notes)
-  VALUES (@project_id, @event_id, @stage, @resource_type, @resource_name, @contractor_id, @po_ref, @quantity, @actual_qty, @rate_basis, @unit_rate, @allocated_days, @start_date, @end_date, @status, @notes)`);
+  (project_id, event_id, stage, resource_type, resource_name, contractor_id, po_ref, quantity, actual_qty, progress_override, rate_basis, unit_rate, allocated_days, start_date, end_date, status, notes)
+  VALUES (@project_id, @event_id, @stage, @resource_type, @resource_name, @contractor_id, @po_ref, @quantity, @actual_qty, @progress_override, @rate_basis, @unit_rate, @allocated_days, @start_date, @end_date, @status, @notes)`);
 const insertEventStmt = db.prepare(`INSERT INTO project_events
   (project_id, seq_no, stage, event_name, planned_start, planned_end, actual_start, actual_end, status, assigned_to, progress_pct, is_collapsed, remarks)
   VALUES (@project_id, @seq_no, @stage, @event_name, @planned_start, @planned_end, @actual_start, @actual_end, @status, @assigned_to, @progress_pct, @is_collapsed, @remarks)`);
@@ -1364,11 +1428,66 @@ app.get('/api/projects', async (req, res) => {
   res.json(await listProjects());
 });
 
+// A project as one login may see it: the tabs it cannot view are left out, and myAccess says what it may do on each tab of THIS project
+// (the form uses it to hide tabs and lock fields; the server enforces the same rules on every save).
+function shapeDetailFor(req, detail) {
+  if (!detail) return detail;
+  const u = sessionUser(req), can = (r, a) => acl.canOn(u, r, a, detail.id), out = { ...detail };
+  if (!can('events', 'view')) { out.events = []; out.materials = []; out.crews = []; }
+  if (!can('cost', 'view')) delete out.costStatement;
+  out.myAccess = Object.fromEntries(acl.TAB_RESOURCES.map(r => [r, acl.actionsOf(r).filter(a => can(r, a))]));
+  return out;
+}
 app.get('/api/projects/:id', async (req, res) => {
   const detail = await loadProjectDetail(req.params.id);
   if (!detail) return res.status(404).json({ error: 'Project not found' });
-  res.json(detail);
+  res.json(shapeDetailFor(req, detail));
 });
+
+// The project save sends the Brief AND the whole Sequence of Events in one request. For a login that may not change all of it, this works
+// out what is really saved: anything it may not change comes from the database, not from the request.
+//   · Brief fields need projects "edit".
+//   · An event / material / crew line: "edit" saves the line as sent; "actuals" saves only its Actual / Consumed Qty and dated entries;
+//     with neither the line stays as it is.
+//   · A row with no id (or an event with a new client id) is a CREATE; an existing row missing from the request is a DELETE.
+//     Both are refused (403) without the matching right — never silently undone.
+const BRIEF_FIELDS = ['name', 'governorateIds', 'city', 'projectTypeId', 'contractorId', 'subcontractorIds', 'projectManagerId', 'businessUnitId', 'status', 'priority',
+  'plannedPct', 'actualPct', 'approvedBudget', 'contractValue', 'actualCost', 'committedCost', 'expectedDelayDays', 'startDate', 'endDate', 'contractReference',
+  'fundingSource', 'projectSponsor', 'objective', 'scope'];
+const accessError = message => Object.assign(new Error(message), { status: 403 });
+async function bodyForAccess(user, projectId, b) {
+  const can = (r, a) => acl.canOn(user, r, a, projectId);
+  const brief = can('projects', 'edit'), edit = can('events', 'edit'), create = can('events', 'create'), del = can('events', 'delete'), actuals = can('events', 'actuals');
+  if (brief && edit && create && del) return b; // unrestricted: saved exactly as sent (every login that exists today)
+  const ex = await loadProjectDetail(projectId);
+  const out = { ...b };
+  if (!brief) BRIEF_FIELDS.forEach(k => { out[k] = ex[k]; });
+  if (!can('events', 'view')) { out.events = ex.events.map(e => ({ ...e, clientId: String(e.id) })); out.materials = ex.materials.map(l => ({ ...l, eventClientId: l.eventId != null ? String(l.eventId) : null })); out.crews = ex.crews.map(l => ({ ...l, eventClientId: l.eventId != null ? String(l.eventId) : null })); return out; }
+  const asEvent = e => ({ ...e, clientId: String(e.id) }), asLine = l => ({ ...l, eventClientId: l.eventId != null ? String(l.eventId) : null });
+  const bodyEvents = Array.isArray(b.events) ? b.events : [], bodyMat = Array.isArray(b.materials) ? b.materials : [], bodyCrew = Array.isArray(b.crews) ? b.crews : [];
+  const exEvents = new Map(ex.events.map(e => [String(e.id), e])), exMat = new Map(ex.materials.map(m => [m.id, m])), exCrew = new Map(ex.crews.map(c => [c.id, c]));
+  const isOld = (map, key) => key != null && map.has(key);
+  // rows that carry an id that is not on this project are refused outright
+  for (const [rows, map] of [[bodyMat, exMat], [bodyCrew, exCrew]]) if (rows.some(r => r && r.id != null && !map.has(Number(r.id)))) throw accessError('This project was changed by someone else since you opened it (or the line is not part of it). Close and reopen the project, then enter your quantities again.');
+  const evById = new Map(bodyEvents.filter(e => isOld(exEvents, String(e.clientId))).map(e => [String(e.clientId), e]));
+  const matById = new Map(bodyMat.filter(r => r && r.id != null).map(r => [Number(r.id), r])), crewById = new Map(bodyCrew.filter(r => r && r.id != null).map(r => [Number(r.id), r]));
+  const added = bodyEvents.filter(e => !isOld(exEvents, String(e.clientId))).length + bodyMat.filter(r => !r || r.id == null).length + bodyCrew.filter(r => !r || r.id == null).length;
+  const removed = [...exEvents.keys()].filter(k => !evById.has(k)).length + [...exMat.keys()].filter(k => !matById.has(k)).length + [...exCrew.keys()].filter(k => !crewById.has(k)).length;
+  if (added && !create) throw accessError('You do not have permission to add events, materials or crew lines on this project');
+  if (removed && !del) throw accessError('You do not have permission to delete events, materials or crew lines on this project');
+  const keepEvent = e => { const sent = evById.get(String(e.id)); if (!sent) return del ? null : asEvent(e); return edit ? sent : asEvent(e); };
+  out.events = [...ex.events.map(keepEvent).filter(Boolean), ...(create ? bodyEvents.filter(e => !isOld(exEvents, String(e.clientId))) : [])];
+  const keepLine = (l, sentMap, qtyField) => {
+    const sent = sentMap.get(l.id);
+    if (!sent) return del ? null : asLine(l);
+    if (edit) return sent;
+    if (actuals) return { ...asLine(l), [qtyField]: Math.max(0, Number(sent[qtyField]) || 0), entries: Array.isArray(sent.entries) ? sent.entries : l.entries };
+    return asLine(l);
+  };
+  out.materials = [...ex.materials.map(l => keepLine(l, matById, 'consumedQty')).filter(Boolean), ...(create ? bodyMat.filter(r => !r || r.id == null) : [])];
+  out.crews = [...ex.crews.map(l => keepLine(l, crewById, 'actualQty')).filter(Boolean), ...(create ? bodyCrew.filter(r => !r || r.id == null) : [])];
+  return out;
+}
 
 // All projects' Sequence-of-Events rows, flattened with project name/code — the source
 // data for the Gantt Timeline view (grouped/nested client-side by project then stage).
@@ -1991,6 +2110,7 @@ app.post('/api/projects', async (req, res) => {
   const sanitizedEvents = sanitizeEventRows(b.events);
   const sanitizedMaterials = sanitizeMaterialRows(b.materials);
   const sanitizedCrews = sanitizeCrewRows(b.crews);
+  deriveEventProgress(sanitizedEvents, sanitizedMaterials, sanitizedCrews);
   const sanitizedSubcontractorIds = sanitizeIdList(b.subcontractorIds);
   const sanitizedGovernorateIds = sanitizeIdList(b.governorateIds);
   const autoFields = {
@@ -2018,17 +2138,23 @@ app.post('/api/projects', async (req, res) => {
     return info.lastInsertRowid;
   });
   const newId = await runInsert();
-  res.status(201).json(await loadProjectDetail(newId));
+  res.status(201).json(shapeDetailFor(req, await loadProjectDetail(newId)));
 });
 
 app.put('/api/projects/:id', async (req, res) => {
   const existing = await db.prepare('SELECT id FROM projects WHERE id = ? AND deleted_at IS NULL').get(req.params.id);
   if (!existing) return res.status(404).json({ error: 'Project not found' });
-  const b = req.body;
+  let b = req.body;
+  const caller = sessionUser(req);
+  if (caller && !caller.isAdmin) {
+    try { b = await bodyForAccess(caller, Number(req.params.id), req.body || {}); }
+    catch (err) { if (err.status === 403) return res.status(403).json({ error: err.message, code: 'ACCESS_DENIED' }); throw err; }
+  }
   if (!validateProjectBody(b, res)) return;
   const sanitizedEvents = sanitizeEventRows(b.events);
   const sanitizedMaterials = sanitizeMaterialRows(b.materials);
   const sanitizedCrews = sanitizeCrewRows(b.crews);
+  deriveEventProgress(sanitizedEvents, sanitizedMaterials, sanitizedCrews);
   const sanitizedSubcontractorIds = sanitizeIdList(b.subcontractorIds);
   const sanitizedGovernorateIds = sanitizeIdList(b.governorateIds);
   const autoFields = {
@@ -2058,7 +2184,7 @@ app.put('/api/projects/:id', async (req, res) => {
     await syncProjectChildren(req.params.id, sanitizedMaterials, sanitizedCrews, sanitizedEvents, sanitizedSubcontractorIds, sanitizedGovernorateIds, actorName(req));
   });
   await runUpdate();
-  res.json(await loadProjectDetail(req.params.id));
+  res.json(shapeDetailFor(req, await loadProjectDetail(req.params.id)));
 });
 
 app.delete('/api/projects/:id', async (req, res) => {
@@ -3745,6 +3871,12 @@ const omanToday = () => new Date(Date.now() + 4 * 3600 * 1000).toISOString().sli
 // Which projects this request may read: the administrator reads all (or the `projects` the page asks for); anyone else
 // only the projects granted to them, further narrowed by the `projects` the page asks for. Also reports whether the
 // person may see VOWD values and change requests, since the facts quote both.
+// The event rows inside the subcontractor facts come from the Sequence of Events — drop those of projects this login may not view events on.
+function hideUnviewableEvents(req, facts) {
+  const u = sessionUser(req);
+  if (u && !u.isAdmin && facts && Array.isArray(facts.events)) facts.events = facts.events.filter(e => acl.canOn(u, 'events', 'view', e.projectId));
+  return facts;
+}
 function subPerfScope(req) {
   let asked = null;
   if (req.query.projects !== undefined && String(req.query.projects) !== '') {
@@ -3837,13 +3969,13 @@ async function loadSubcontractorFacts(scope) {
 }
 
 app.get('/api/subcontractor-performance', async (req, res) => {
-  res.json(await loadSubcontractorFacts(subPerfScope(req)));
+  res.json(hideUnviewableEvents(req, await loadSubcontractorFacts(subPerfScope(req))));
 });
 
 // Excel benchmarking export — scorecard, deliverable compliance, variations and contracts, plus how the score is worked out.
 app.get('/api/subcontractor-performance/export', async (req, res) => {
   const scope = subPerfScope(req);
-  const facts = await loadSubcontractorFacts(scope);
+  const facts = hideUnviewableEvents(req, await loadSubcontractorFacts(scope));
   const asOf = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.asOf || '')) ? String(req.query.asOf) : facts.asOf;
   const period = SubPerf.PERIODS.some(p => p.key === req.query.period) ? req.query.period : 'all';
   const from = SubPerf.periodFrom(period, asOf);
@@ -3944,13 +4076,35 @@ app.get('/api/subcontractor-performance/export', async (req, res) => {
    PROJECT PROGRESS — Excel measurement sheet (planned vs actual by activity). The numbers come from public/progress-calc.js,
    the same file the Project Progress page and the Report Library use.
    ========================================================= */
-app.get('/api/progress/export', async (req, res) => {
+// eventId -> [[contractorId, name], …]: the sub contractor(s) named on each event's crew / labour lines (how an event is tied to a subcontractor)
+async function loadEventSubs(projectIds) {
+  const sc = projectScope('pc.project_id', projectIds);
+  const rows = await db.prepare(`SELECT pc.event_id, pc.contractor_id, ct.name FROM project_crews pc JOIN contractors ct ON ct.id = pc.contractor_id
+    WHERE pc.event_id IS NOT NULL${sc.sql} ORDER BY ct.name`).all(...sc.params);
+  const out = {};
+  rows.forEach(r => { const a = (out[r.event_id] ||= []); if (!a.some(x => x[0] === r.contractor_id)) a.push([r.contractor_id, r.name]); });
+  return out;
+}
+function progressScopeIds(req) {
   const u = sessionUser(req);
   const asked = [...new Set(String(req.query.projects || '').split(',').map(Number).filter(n => Number.isInteger(n) && n > 0 && n <= 2147483647))].slice(0, 5000);
-  const ids = u.isAdmin ? (asked.length ? asked : null) : (asked.length ? asked.filter(i => (u.projectIds || []).includes(i)) : (u.projectIds || []));
+  return u.isAdmin ? (asked.length ? asked : null) : (asked.length ? asked.filter(i => (u.projectIds || []).includes(i)) : (u.projectIds || [])).filter(i => acl.canOn(u, 'events', 'view', i));
+}
+app.get('/api/progress/event-subcontractors', async (req, res) => {
+  res.json({ events: await loadEventSubs(progressScopeIds(req)) });
+});
+
+app.get('/api/progress/export', async (req, res) => {
+  const ids = progressScopeIds(req);
   const iso = v => (/^\d{4}-\d{2}-\d{2}$/.test(String(v || '')) ? String(v) : undefined);
-  const [plist, evs] = await Promise.all([listProjects(ids), listEvents(ids)]);
-  const an = require('./public/progress-calc.js').analyse(plist, evs, { today: omanToday(), from: iso(req.query.from), to: iso(req.query.to) });
+  const PCalc = require('./public/progress-calc.js');
+  const [plist0, evs0] = await Promise.all([listProjects(ids), listEvents(ids)]);
+  // optional filters: ?subs=7,0 (0 = no subcontractor) and ?event=Name (repeatable); projects with no matching event drop out
+  const fSubs = String(req.query.subs || '').split(',').filter(s => /^\d+$/.test(s)).map(Number).slice(0, 200);
+  const fEvents = [].concat(req.query.event || []).map(s => String(s).slice(0, 200)).slice(0, 50);
+  const evs = (fSubs.length || fEvents.length) ? PCalc.filterEvents(evs0, fSubs.length ? await loadEventSubs(ids) : {}, { subcontractorIds: fSubs, eventNames: fEvents }) : evs0;
+  const plist = (fSubs.length || fEvents.length) ? plist0.filter(p => evs.some(e => e.projectId === p.id)) : plist0;
+  const an = PCalc.analyse(plist, evs, { today: omanToday(), from: iso(req.query.from), to: iso(req.query.to) });
   const wb = require('./progress-export').buildProgressWorkbook(an, { stages: STAGES });
   await logAudit(req, { action: 'download', entityType: 'Progress sheet', entityLabel: `Progress measurement sheet · ${plist.length} project${plist.length === 1 ? '' : 's'}`, details: { projects: plist.map(p => p.code) } });
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
@@ -3962,7 +4116,8 @@ app.get('/api/progress/export', async (req, res) => {
    REPORT LIBRARY — catalogue, generate, archive, schedules, access log (see reports.js)
    ========================================================= */
 require('./reports')(app, { db, sessionUser, logAudit, projectScope, listProjects, listEvents, listRisks, listIssues, listMilestones,
-  loadSubcontractorFacts, STAGES, crewLineCost, SubPerf, omanToday });
+  loadSubcontractorFacts, loadEventSubs, STAGES, crewLineCost, SubPerf, omanToday });
+alertScan = require('./notifications')(app, { db, sessionUser, listProjects, listEvents, omanToday }).scan;
 
 /* =========================================================
    ERROR HANDLER

@@ -231,7 +231,7 @@
       const stages = []; P.tasks.forEach(n => { if (!stages.includes(n.raw.stage)) stages.push(n.raw.stage); });
       P.tasks.slice().sort((a, b) => (a.raw.seqNo || 0) - (b.raw.seqNo || 0)).forEach(n => {
         const e = n.raw, planned = n.sched ? r1(100 * plannedFrac(n, today)) : null, actual = r1(n.done ? 100 : n.prog);
-        out.push({ projectId: P.p.id, code: P.p.code, project: P.p.name, stage: e.stage, seq: e.seqNo, task: e.eventName, plannedStart: e.plannedStart, plannedEnd: e.plannedEnd, plannedDays: n.ps != null && n.pe != null ? n.pe - n.ps + 1 : null,
+        out.push({ projectId: P.p.id, eventId: e.id, code: P.p.code, project: P.p.name, stage: e.stage, seq: e.seqNo, task: e.eventName, plannedStart: e.plannedStart, plannedEnd: e.plannedEnd, plannedDays: n.ps != null && n.pe != null ? n.pe - n.ps + 1 : null,
           actualStart: e.actualStart, actualEnd: e.actualEnd, planned, actual, variance: planned == null ? null : r1(actual - planned), weight: n.sched ? n.w : null, status: e.status, owner: e.assignedTo || '',
           daysLate: !n.done && n.pe != null && n.pe < today ? today - n.pe : (n.done && n.ae != null && n.pe != null && n.ae > n.pe ? n.ae - n.pe : 0), overdue: !n.done && n.pe != null && n.pe < today });
       });
@@ -239,5 +239,35 @@
     return out;
   }
 
-  return { analyse, curve, workPackages, slippage, lookahead, measurement, stateAt, num, iso, todayISO, addMonths, monthEnd };
+  /* ---------- filter events by subcontractor and / or event name ----------
+     subs = { eventId: [[contractorId, name], …] } (from the crew / labour lines); subcontractorId 0 = "no subcontractor assigned".
+     An event carried by several subcontractors matches when ANY of them is selected; both filters must match. */
+  function filterEvents(events, subs, f) {
+    f = f || {};
+    const ids = (f.subcontractorIds || []).map(Number), names = f.eventNames || [];
+    if (!ids.length && !names.length) return events;
+    return events.filter(e => {
+      if (names.length && !names.includes(e.eventName)) return false;
+      if (!ids.length) return true;
+      const s = subs && subs[e.id];
+      return s && s.length ? s.some(x => ids.includes(Number(x[0]))) : ids.includes(0);
+    });
+  }
+
+  /* ---------- line progress: Sequence of Events material / crew lines ----------
+     A line's Progress % = Actual Qty / Planned Qty (capped 0-100), unless a person typed a value instead (override).
+     A line with no planned quantity and no override cannot be measured (null) and is left out. An event's Progress % is the
+     simple average of its measurable lines. Used by the project form and by the server on save, so they always agree. */
+  function lineProgress(planned, actual, override) {
+    if (override != null && String(override).trim() !== '' && isFinite(Number(override))) return r1(clamp(Number(override), 0, 100));
+    const p = Number(planned) || 0;
+    if (p <= 0) return null;
+    return r1(clamp((Number(actual) || 0) / p * 100, 0, 100));
+  }
+  function averageProgress(values) {
+    const v = (values || []).filter(x => x != null);
+    return v.length ? r1(v.reduce((s, x) => s + x, 0) / v.length) : null;
+  }
+
+  return { analyse, filterEvents, lineProgress, averageProgress, curve, workPackages, slippage, lookahead, measurement, stateAt, num, iso, todayISO, addMonths, monthEnd };
 });

@@ -155,6 +155,7 @@ h1,h2,h3,h4,.font-display{font-family:var(--font-display);}
 .date-dmy-btn:hover:not(:disabled){color:var(--teal-dark);}
 .date-dmy-btn:disabled{cursor:default;opacity:.5;}
 input.date-dmy-native{position:absolute;left:0;bottom:0;width:100%;height:1px;padding:0;border:0;opacity:0;pointer-events:none;}
+input.date-dmy-native:disabled{opacity:0 !important;} /* a disabled date field must not un-hide its native picker */
 .btn-reset{
   border:1px solid var(--border);background:#fff;color:var(--muted);border-radius:8px;
   padding:7px 14px;font-size:.8rem;font-weight:600;display:flex;align-items:center;gap:6px;
@@ -603,6 +604,27 @@ table.pf-line-table .col-name{min-width:150px;}
 /* ---- dated actual entries ---- */
 .actual-wrap{display:flex;align-items:center;gap:4px;}
 .actual-wrap .form-control{flex:1;min-width:64px;}
+/* ---- line Progress % (automatic = actual / planned; typing a value overrides it) ---- */
+.prog-cell .actual-wrap .form-control{min-width:58px;}
+tr[data-manual="1"] .line-progress{background:#FFF5DC;border-color:#E0A526;font-weight:700;color:#835700;}
+.prog-reset{display:none;flex:none;width:26px;height:26px;border:1px solid var(--border);border-radius:7px;background:#fff;color:var(--muted);align-items:center;justify-content:center;cursor:pointer;padding:0;font-size:.8rem;}
+tr[data-manual="1"] .prog-reset{display:inline-flex;} .prog-reset:hover{background:var(--surface);color:var(--ink);}
+.evt-progress.evt-progress-auto{background:var(--teal-light);font-weight:700;cursor:default;}
+/* ---- per-project access (the form is only marked up like this for a login whose rights on the project are limited) ---- */
+.pf-access-note{margin:0 0 10px;padding:8px 12px;border-radius:9px;background:#EAF4F7;color:#0F4C5C;font-size:.76rem;line-height:1.45;border:1px solid #BFDCE5;}
+/* Sequence of Events: actual quantities only / view only / no create / no delete */
+.pf-pane.pf-ev-actuals .evt-edit-tool, .pf-pane.pf-ev-view .evt-edit-tool, .pf-pane.pf-ev-actuals .fill-down-btn, .pf-pane.pf-ev-view .fill-down-btn,
+.pf-pane.pf-ev-actuals .evt-select-cell, .pf-pane.pf-ev-view .evt-select-cell, .pf-pane.pf-ev-actuals .evt-select-all, .pf-pane.pf-ev-view .evt-select-all,
+.pf-pane.pf-ev-actuals :is(.evt-move-up,.evt-move-down,.evt-clone,.remove-row,.mat-move-up,.mat-move-down,.mat-clone,.mat-cut,.mat-clone-selected,.mat-cut-selected,.mat-delete-selected,.mat-select,.mat-select-all,.evt-add-material,
+  .crew-move-up,.crew-move-down,.crew-clone,.crew-cut,.crew-clone-selected,.crew-cut-selected,.crew-delete-selected,.crew-select,.crew-select-all,.evt-add-crew,.prog-reset),
+.pf-pane.pf-ev-view :is(.evt-move-up,.evt-move-down,.evt-clone,.remove-row,.mat-move-up,.mat-move-down,.mat-clone,.mat-cut,.mat-clone-selected,.mat-cut-selected,.mat-delete-selected,.mat-select,.mat-select-all,.evt-add-material,
+  .crew-move-up,.crew-move-down,.crew-clone,.crew-cut,.crew-clone-selected,.crew-cut-selected,.crew-delete-selected,.crew-select,.crew-select-all,.evt-add-crew,.prog-reset,.actual-log-btn),
+.pf-pane.pf-ev-nocreate :is(#pfAddEvent,#pfUploadEventTemplate,.evt-clone,.mat-clone,.mat-clone-selected,.crew-clone,.crew-clone-selected,.evt-add-material,.evt-add-crew),
+.pf-pane.pf-ev-nodelete :is(#pfDeleteSelectedEvents,.remove-row,.mat-delete-selected,.crew-delete-selected){display:none !important;}
+/* every other tab: hide the buttons for what the login may not do on this project */
+.pf-pane.pf-p-nocreate :is(.btn-add){display:none !important;}
+.pf-pane.pf-p-noedit :is(button:has(> .bi-pencil),button:has(> .bi-pencil-square),button[title*="Edit" i]){display:none !important;}
+.pf-pane.pf-p-nodelete :is(button.danger,button:has(> .bi-trash),button[title*="Delete" i],button[title*="Remove" i]){display:none !important;}
 .actual-log-btn{position:relative;flex:none;width:30px;height:30px;border:1px solid var(--border);border-radius:7px;background:#fff;color:var(--teal-dark);display:inline-flex;align-items:center;justify-content:center;cursor:pointer;padding:0;}
 .actual-log-btn:hover{background:var(--teal);border-color:var(--teal);color:#fff;}
 .actual-log-btn.has-entries{background:var(--teal-light);border-color:var(--teal);}
@@ -830,6 +852,7 @@ table.inv-line-table .form-control,table.inv-line-table .form-select{font-size:.
 </style>
 <link rel="stylesheet" href="/report-library.css">
 <link rel="stylesheet" href="/progress-page.css">
+<link rel="stylesheet" href="/notifications.css">
 </head>
 <body>
 
@@ -891,6 +914,10 @@ table.inv-line-table .form-control,table.inv-line-table .form-select{font-size:.
       <div class="meta">
         <strong id="asOfDate">As of —</strong>
         NEC AiVizion ERP
+      </div>
+      <div class="nt-wrap">
+        <button type="button" class="nt-bell" id="ntBell" title="Alerts" aria-label="Alerts" aria-haspopup="true" aria-expanded="false"><i class="bi bi-bell"></i><span id="ntBadge" hidden>0</span></button>
+        <div class="nt-panel" id="ntPanel" hidden></div>
       </div>
     </div>
 
@@ -2541,86 +2568,102 @@ function renderOverview(list){
    ========================================================= */
 function renderPortfolio(list){
   const el = document.getElementById('tab-portfolio');
+  const rows = list.map(p=>({ ...p, phase: currentPhaseFor(p.id) }));
+  const canRegister = !!document.querySelector('.side-link[data-tab="master-projects"]');
   el.innerHTML = `
-    <div class="section-title"><i class="bi bi-diagram-3"></i>Project Portfolio</div>
+    <div class="section-title" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">
+      <span><i class="bi bi-diagram-3"></i>Project Portfolio</span>
+      ${canRegister ? `<button class="btn btn-outline-secondary btn-sm" id="pfGoRegister" type="button" title="Search, filter, create and edit projects"><i class="bi bi-diagram-3-fill"></i> Open the project register</button>` : ''}
+    </div>
     <div class="kpi-row" id="pfKpis"></div>
-    <div class="chart-row cols-2" style="margin-top:16px;">
-      <div class="chart-card"><div class="chart-title">Projects by Status</div><canvas id="pfStatusDonut"></canvas></div>
-      <div class="chart-card"><div class="chart-title">Projects by Location</div><canvas id="pfGovBar"></canvas></div>
-    </div>
-    <div class="chart-row cols-2" style="margin-top:14px;">
-      <div class="chart-card"><div class="chart-title">Projects by Project Type</div><canvas id="pfTypeBar"></canvas></div>
-      <div class="chart-card"><div class="chart-title">Projects by Contractor</div><canvas id="pfContractorBar"></canvas></div>
-    </div>
-    <div class="section-title" style="margin-top:22px;"><i class="bi bi-table"></i>All Projects</div>
-    <div class="table-card">
-      <div class="table-toolbar">
-        <div class="search-box"><i class="bi bi-search"></i><input type="text" id="pfSearch" placeholder="Search project, city, contractor…"></div>
-        <span style="font-size:.74rem;color:var(--muted);">Click a row for project details · manage/create projects under <strong>Programme → Projects</strong></span>
+
+    <div class="section-title" style="margin-top:22px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">
+      <span><i class="bi bi-cash-stack"></i>Financial &amp; Timeline Summary</span>
+      <div style="display:flex;align-items:center;gap:8px;font-size:.78rem;font-weight:600;color:var(--muted);">
+        New / Closed period
+        <select class="form-select" id="pfPeriodType" style="width:auto;display:inline-block;padding:4px 26px 4px 10px;font-size:.78rem;">
+          ${['Month','Quarter','Year'].map(t=>`<option ${mpPeriodType===t?'selected':''}>${t}</option>`).join('')}
+        </select>
       </div>
-      <div style="overflow-x:auto;">
-      <table class="dash-table" id="pfTable">
-        <thead><tr>
-          <th data-key="name">Project <i class="bi bi-arrow-down-up"></i></th>
-          <th data-key="governorate">Location <i class="bi bi-arrow-down-up"></i></th>
-          <th data-key="contractor">Contractor <i class="bi bi-arrow-down-up"></i></th>
-          <th data-key="type">Type <i class="bi bi-arrow-down-up"></i></th>
-          <th data-key="status">Status <i class="bi bi-arrow-down-up"></i></th>
-          <th data-key="plannedPct">Planned % <i class="bi bi-arrow-down-up"></i></th>
-          <th data-key="actualPct">Actual % <i class="bi bi-arrow-down-up"></i></th>
-          <th data-key="approvedBudget">Budget <i class="bi bi-arrow-down-up"></i></th>
-        </tr></thead>
-        <tbody id="pfTableBody"></tbody>
-      </table>
-      </div>
-      <div class="pg-bar" id="pfPagination"></div>
+    </div>
+    <div class="kpi-row" id="pfKpis2"></div>
+
+    <div class="section-title" style="margin-top:22px;"><i class="bi bi-pie-chart"></i>Distribution</div>
+    <div class="chart-row cols-3">
+      <div class="chart-card"><div class="chart-title">By Status</div><canvas id="pfStatusDonut"></canvas></div>
+      <div class="chart-card"><div class="chart-title">By Phase</div><div class="chart-sub">Current stage of activity, from Sequence of Events</div><canvas id="pfPhaseBar"></canvas></div>
+      <div class="chart-card"><div class="chart-title">By Subsidiary</div><div class="chart-sub">Business unit ownership</div><canvas id="pfBuDonut"></canvas></div>
+    </div>
+    <div class="chart-row cols-3" style="margin-top:14px;">
+      <div class="chart-card"><div class="chart-title">By Location</div><div class="chart-sub">Project sites across Oman, by governorate</div><canvas id="pfGovBar"></canvas></div>
+      <div class="chart-card"><div class="chart-title">By Project Type</div><canvas id="pfTypeBar"></canvas></div>
+      <div class="chart-card"><div class="chart-title">By Contractor</div><canvas id="pfContractorBar"></canvas></div>
     </div>
   `;
 
-  const pfBuckets = {
-    'Total Projects': list, 'Active': list.filter(p=>p.status==='Active'), 'Completed': list.filter(p=>p.status==='Completed'),
-    'At Risk': list.filter(p=>p.status==='At Risk'), 'Delayed': list.filter(p=>p.status==='Delayed'), 'Not Started': list.filter(p=>p.status==='Not Started')
+  const reg = document.getElementById('pfGoRegister');
+  if(reg) reg.addEventListener('click', ()=> document.querySelector('.side-link[data-tab="master-projects"]').click());
+
+  const buckets = {
+    'Total Projects': rows, 'Active': rows.filter(p=>p.status==='Active'), 'Completed': rows.filter(p=>p.status==='Completed'),
+    'At Risk': rows.filter(p=>p.status==='At Risk'), 'Delayed': rows.filter(p=>p.status==='Delayed'), 'Not Started': rows.filter(p=>p.status==='Not Started')
   };
-  renderKpiRow('pfKpis', [
-    {label:'Total Projects', value:list.length, color:'--teal', bg:'--teal-light', icon:'bi-diagram-3', onClick:()=> drilldownProjects('Total Projects', 'All projects in the current filter', pfBuckets['Total Projects'])},
-    {label:'Active', value:pfBuckets.Active.length, color:'--blue', bg:'--blue-bg', icon:'bi-play-circle', onClick:()=> drilldownProjects('Active Projects', '', pfBuckets.Active)},
-    {label:'Completed', value:pfBuckets.Completed.length, color:'--green', bg:'--green-bg', icon:'bi-check-circle', onClick:()=> drilldownProjects('Completed Projects', '', pfBuckets.Completed)},
-    {label:'At Risk', value:pfBuckets['At Risk'].length, color:'--amber', bg:'--amber-bg', icon:'bi-exclamation-circle', onClick:()=> drilldownProjects('At Risk Projects', '', pfBuckets['At Risk'])},
-    {label:'Delayed', value:pfBuckets.Delayed.length, color:'--red', bg:'--red-bg', icon:'bi-x-octagon', onClick:()=> drilldownProjects('Delayed Projects', '', pfBuckets.Delayed)},
-    {label:'Not Started', value:pfBuckets['Not Started'].length, color:'--grey', bg:'--grey-bg', icon:'bi-hourglass', onClick:()=> drilldownProjects('Not Started Projects', '', pfBuckets['Not Started'])},
-  ]);
-
-  makeDonut('pfStatusDonut', STATUSES, STATUSES.map(s=>list.filter(p=>p.status===s).length), STATUSES.map(s=>STATUS_COLOR[s]),
-    (idx,label)=> drilldownProjects(label, `Status: ${label}`, list.filter(p=>p.status===label)));
-
-  makeBar('pfGovBar', GOV_NAMES, [{label:'Projects', data:GOV_NAMES.map(g=>projectsInGov(list, g).length), backgroundColor:'#1B7A8C', borderRadius:4}],
-    {horizontal:true, onClick:(idx,label)=> drilldownProjects(label, `Location: ${label}`, projectsInGov(list, label))});
-
-  const typeCounts = countBy(list, p=>p.type);
-  makeBar('pfTypeBar', TYPE_NAMES, [{label:'Projects', data:TYPE_NAMES.map(t=>typeCounts[t]||0), backgroundColor:'#C9A15A', borderRadius:4}],
-    {horizontal:true, onClick:(idx,label)=> drilldownProjects(label, `Project type: ${label}`, list.filter(p=>p.type===label))});
-
-  const contractorCounts = countBy(list, p=>p.contractor);
-  makeBar('pfContractorBar', CONTRACTOR_NAMES, [{label:'Projects', data:CONTRACTOR_NAMES.map(n=>contractorCounts[n]||0), backgroundColor:'#0F4C5C', borderRadius:4}],
-    {horizontal:true, onClick:(idx,label)=> drilldownProjects(label, `Contractor: ${label}`, list.filter(p=>p.contractor===label))});
-
-  function renderTable(){
-    let rows = list.slice();
-    const q = (searchState.pfTable||'').toLowerCase();
-    if(q) rows = rows.filter(p=> (p.name+(p.city||'')+(p.contractor||'')+p.governorate).toLowerCase().includes(q));
-    rows = sortRows(rows, 'pfTable', 'name');
-    const meta = paginateRows(rows, 'pfTable');
-    document.getElementById('pfTableBody').innerHTML = meta.pageRows.length? meta.pageRows.map(p=>`
-      <tr data-id="${p.id}">
-        <td><strong>${p.name}</strong></td><td>${p.governorate}</td><td>${p.contractor||'—'}</td><td>${p.type}</td>
-        <td>${badge(p.status)}</td><td>${p.plannedPct}%</td><td>${p.actualPct}%</td><td>${fmtOMR(p.approvedBudget)}</td>
-      </tr>`).join('') : `<tr class="no-click"><td colspan="8"><div class="empty-state">No projects match your filters or search.</div></td></tr>`;
-    document.querySelectorAll('#pfTableBody tr[data-id]').forEach(tr=> tr.addEventListener('click', ()=> openProjectModal(Number(tr.dataset.id))));
-    renderPagination('pfPagination', 'pfTable', meta, renderTable);
+  function renderFinancialKpis(){
+    const {start, end} = periodBounds(mpPeriodType, null);
+    const opened = rows.filter(p=> p.createdAt && new Date(p.createdAt) >= start && new Date(p.createdAt) <= end);
+    const closed = rows.filter(p=> p.status==='Completed' && p.updatedAt && new Date(p.updatedAt) >= start && new Date(p.updatedAt) <= end);
+    const durations = rows.map(projectDurationDays);
+    const plannedDurs = durations.map(d=>d.plannedDays).filter(v=>v!=null);
+    const actualDurs = durations.map(d=>d.actualDays).filter(v=>v!=null);
+    const avgPlanned = plannedDurs.length? Math.round(plannedDurs.reduce((a,b)=>a+b,0)/plannedDurs.length) : 0;
+    const avgActual = actualDurs.length? Math.round(actualDurs.reduce((a,b)=>a+b,0)/actualDurs.length) : 0;
+    const sumBudget = rows.reduce((s,p)=>s+(p.approvedBudget||0),0);
+    const sumCommitted = rows.reduce((s,p)=>s+(p.committedCost||0),0);
+    const sumActual = rows.reduce((s,p)=>s+(p.actualCost||0),0);
+    renderKpiRow('pfKpis2', [
+      {label:`Opened This ${mpPeriodType}`, value:opened.length, color:'--blue', bg:'--blue-bg', icon:'bi-plus-circle', onClick:()=> drilldownProjects(`Opened this ${mpPeriodType.toLowerCase()}`, 'By project creation date', opened)},
+      {label:`Closed This ${mpPeriodType}`, value:closed.length, color:'--green', bg:'--green-bg', icon:'bi-check2-circle', onClick:()=> drilldownProjects(`Closed this ${mpPeriodType.toLowerCase()}`, 'Completed, last updated in period', closed)},
+      {label:'Avg Planned Duration', value:avgPlanned+' days', color:'--teal', bg:'--teal-light', icon:'bi-hourglass-split'},
+      {label:'Avg Actual Duration', value:avgActual+' days', color:'--sand', bg:'--sand-light', icon:'bi-hourglass-bottom'},
+      {label:'Total Approved Budget', value:fmtOMR(sumBudget), color:'--teal', bg:'--teal-light', icon:'bi-cash-stack'},
+      {label:'Total Committed', value:fmtOMR(sumCommitted), color:'--amber', bg:'--amber-bg', icon:'bi-wallet2'},
+      {label:'Total Actual Cost', value:fmtOMR(sumActual), color:'--grey', bg:'--grey-bg', icon:'bi-graph-up-arrow'},
+    ]);
   }
-  renderTable();
-  wireSortHeaders('pfTable', renderTable);
-  document.getElementById('pfSearch').addEventListener('input', e=>{ searchState.pfTable = e.target.value; pageState.pfTable = 1; renderTable(); });
+  renderKpiRow('pfKpis', [
+    {label:'Total Projects', value:rows.length, color:'--teal', bg:'--teal-light', icon:'bi-diagram-3', onClick:()=> drilldownProjects('Total Projects', 'All projects in the current filter', buckets['Total Projects'])},
+    {label:'Active', value:buckets.Active.length, color:'--blue', bg:'--blue-bg', icon:'bi-play-circle', onClick:()=> drilldownProjects('Active Projects', '', buckets.Active)},
+    {label:'Completed', value:buckets.Completed.length, color:'--green', bg:'--green-bg', icon:'bi-check-circle', onClick:()=> drilldownProjects('Completed Projects', '', buckets.Completed)},
+    {label:'At Risk', value:buckets['At Risk'].length, color:'--amber', bg:'--amber-bg', icon:'bi-exclamation-circle', onClick:()=> drilldownProjects('At Risk Projects', '', buckets['At Risk'])},
+    {label:'Delayed', value:buckets.Delayed.length, color:'--red', bg:'--red-bg', icon:'bi-x-octagon', onClick:()=> drilldownProjects('Delayed Projects', '', buckets.Delayed)},
+    {label:'Not Started', value:buckets['Not Started'].length, color:'--grey', bg:'--grey-bg', icon:'bi-hourglass', onClick:()=> drilldownProjects('Not Started Projects', '', buckets['Not Started'])},
+  ]);
+  renderFinancialKpis();
+  document.getElementById('pfPeriodType').addEventListener('change', e=>{ mpPeriodType = e.target.value; renderFinancialKpis(); });
+
+  makeDonut('pfStatusDonut', STATUSES, STATUSES.map(s=>rows.filter(p=>p.status===s).length), STATUSES.map(s=>STATUS_COLOR[s]),
+    (idx,label)=> drilldownProjects(label, `Status: ${label}`, rows.filter(p=>p.status===label)));
+
+  const phaseCountMap = countBy(rows, p=>p.phase||'No Events Yet');
+  const phaseLabels = [...STAGES,'No Events Yet'].filter(s=>phaseCountMap[s]);
+  makeBar('pfPhaseBar', phaseLabels, [{label:'Projects', data:phaseLabels.map(s=>phaseCountMap[s]), backgroundColor:'#1B7A8C', borderRadius:4}],
+    {horizontal:true, onClick:(idx,label)=> drilldownProjects(label, `Currently in the ${label} phase`, rows.filter(p=>(p.phase||'No Events Yet')===label))});
+
+  const buNames = [...businessUnitsMaster.map(u=>u.name), 'Unassigned'];
+  const buPairs = buNames.map(n=>({ n, c: rows.filter(p=>(p.businessUnit||'Unassigned')===n).length })).filter(x=>x.c>0);
+  makeDonut('pfBuDonut', buPairs.map(x=>x.n), buPairs.map(x=>x.c), buPairs.map((_,i)=>GANTT_AVATAR_COLORS[i%GANTT_AVATAR_COLORS.length]),
+    (idx,label)=> drilldownProjects(label, `Business Unit: ${label}`, rows.filter(p=>(p.businessUnit||'Unassigned')===label)));
+
+  makeBar('pfGovBar', GOV_NAMES, [{label:'Projects', data:GOV_NAMES.map(g=>projectsInGov(rows, g).length), backgroundColor:'#0F4C5C', borderRadius:4}],
+    {horizontal:true, onClick:(idx,label)=> drilldownProjects(label, `Projects in ${label}`, projectsInGov(rows, label))});
+
+  const typeCounts = countBy(rows, p=>p.type);
+  makeBar('pfTypeBar', TYPE_NAMES, [{label:'Projects', data:TYPE_NAMES.map(t=>typeCounts[t]||0), backgroundColor:'#C9A15A', borderRadius:4}],
+    {horizontal:true, onClick:(idx,label)=> drilldownProjects(label, `Project type: ${label}`, rows.filter(p=>p.type===label))});
+
+  const contractorCounts = countBy(rows, p=>p.contractor);
+  makeBar('pfContractorBar', CONTRACTOR_NAMES, [{label:'Projects', data:CONTRACTOR_NAMES.map(n=>contractorCounts[n]||0), backgroundColor:'#0F4C5C', borderRadius:4}],
+    {horizontal:true, onClick:(idx,label)=> drilldownProjects(label, `Contractor: ${label}`, rows.filter(p=>p.contractor===label))});
 }
 
 /* =========================================================
@@ -4196,37 +4239,16 @@ async function exportIntakeChangeLog(){
 }
 
 /* ---- Projects master page: this is where projects are created/edited/deleted.
-   The searchable/filterable register everything else drills into — KPIs, charts and
-   the table below all react to the same local search + filter set (independent of the
-   top filter bar, since this is a management table rather than an analytics view). ---- */
+   The searchable/filterable register everything else drills into — it works on its own search
+   + filter set (independent of the top filter bar, since this is a management table). The KPIs
+   and charts that used to sit above it are on the Project Portfolio page. ---- */
 let mpFilters = { status:'', governorateId:'', businessUnitId:'', phase:'' };
 let mpPeriodType = 'Month';
 function renderMasterProjects(){
   const el = document.getElementById('tab-master-projects');
   const list = projects;
   el.innerHTML = `
-    <div class="section-title"><i class="bi bi-diagram-3-fill"></i>Projects</div>
-    <div class="kpi-row" id="mpKpis"></div>
-
-    <div class="section-title" style="margin-top:22px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">
-      <span><i class="bi bi-cash-stack"></i>Financial &amp; Timeline Summary <span style="font-weight:400;font-size:.72rem;color:var(--muted);text-transform:none;">(reacts to the filters below)</span></span>
-      <div style="display:flex;align-items:center;gap:8px;font-size:.78rem;font-weight:600;color:var(--muted);">
-        New / Closed period
-        <select class="form-select" id="mpPeriodType" style="width:auto;display:inline-block;padding:4px 26px 4px 10px;font-size:.78rem;">
-          ${['Month','Quarter','Year'].map(t=>`<option ${mpPeriodType===t?'selected':''}>${t}</option>`).join('')}
-        </select>
-      </div>
-    </div>
-    <div class="kpi-row" id="mpKpis2"></div>
-
-    <div class="section-title" style="margin-top:22px;"><i class="bi bi-pie-chart"></i>Status Distribution</div>
-    <div class="chart-row cols-3">
-      <div class="chart-card"><div class="chart-title">By Phase</div><div class="chart-sub">Current stage of activity, from Sequence of Events</div><canvas id="mpPhaseBar"></canvas></div>
-      <div class="chart-card"><div class="chart-title">By Subsidiary</div><div class="chart-sub">Business unit ownership</div><canvas id="mpBuDonut"></canvas></div>
-      <div class="chart-card"><div class="chart-title">By Location</div><div class="chart-sub">Project sites across Oman, by governorate</div><canvas id="mpLocationBar"></canvas></div>
-    </div>
-
-    <div class="section-title" style="margin-top:22px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">
+    <div class="section-title" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">
       <span><i class="bi bi-table"></i>All Projects</span>
       <div style="display:flex;gap:8px;flex-wrap:wrap;">
         <button class="btn btn-outline-secondary btn-sm" id="btnExportRegister" type="button"><i class="bi bi-file-earmark-spreadsheet"></i> Export Register (Excel)</button>
@@ -4296,61 +4318,6 @@ function renderMasterProjects(){
     return rows;
   }
 
-  function renderCharts(filtered){
-    const phaseCountMap = countBy(filtered, p=>p.phase||'No Events Yet');
-    const phaseLabels = [...STAGES,'No Events Yet'].filter(s=>phaseCountMap[s]);
-    makeBar('mpPhaseBar', phaseLabels, [{label:'Projects', data:phaseLabels.map(s=>phaseCountMap[s]), backgroundColor:'#1B7A8C', borderRadius:4}],
-      {horizontal:true, onClick:(idx,label)=> drilldownProjects(label, `Currently in the ${label} phase`, filtered.filter(p=>(p.phase||'No Events Yet')===label))});
-
-    const buNames = [...businessUnitsMaster.map(u=>u.name), 'Unassigned'];
-    const buPairs = buNames.map(n=>({ n, c: filtered.filter(p=>(p.businessUnit||'Unassigned')===n).length })).filter(x=>x.c>0);
-    makeDonut('mpBuDonut', buPairs.map(x=>x.n), buPairs.map(x=>x.c), buPairs.map((_,i)=>GANTT_AVATAR_COLORS[i%GANTT_AVATAR_COLORS.length]),
-      (idx,label)=> drilldownProjects(label, `Business Unit: ${label}`, filtered.filter(p=>(p.businessUnit||'Unassigned')===label)));
-
-    makeBar('mpLocationBar', GOV_NAMES, [{label:'Projects', data:GOV_NAMES.map(g=>projectsInGov(filtered, g).length), backgroundColor:'#0F4C5C', borderRadius:4}],
-      {horizontal:true, onClick:(idx,label)=> drilldownProjects(label, `Projects in ${label}`, projectsInGov(filtered, label))});
-  }
-
-  function renderKpis(){
-    const filtered = applyMpFilters();
-    const buckets = {
-      Active: filtered.filter(p=>p.status==='Active'), Completed: filtered.filter(p=>p.status==='Completed'),
-      'At Risk': filtered.filter(p=>p.status==='At Risk'), Delayed: filtered.filter(p=>p.status==='Delayed'), 'Not Started': filtered.filter(p=>p.status==='Not Started')
-    };
-    renderKpiRow('mpKpis', [
-      {label:'Total Projects', value:filtered.length, color:'--teal', bg:'--teal-light', icon:'bi-diagram-3', onClick:()=> drilldownProjects('Total Projects', 'Matching the current filters', filtered)},
-      {label:'Active', value:buckets.Active.length, color:'--blue', bg:'--blue-bg', icon:'bi-play-circle', onClick:()=> drilldownProjects('Active Projects', '', buckets.Active)},
-      {label:'Completed', value:buckets.Completed.length, color:'--green', bg:'--green-bg', icon:'bi-check-circle', onClick:()=> drilldownProjects('Completed Projects', '', buckets.Completed)},
-      {label:'At Risk', value:buckets['At Risk'].length, color:'--amber', bg:'--amber-bg', icon:'bi-exclamation-circle', onClick:()=> drilldownProjects('At Risk Projects', '', buckets['At Risk'])},
-      {label:'Delayed', value:buckets.Delayed.length, color:'--red', bg:'--red-bg', icon:'bi-x-octagon', onClick:()=> drilldownProjects('Delayed Projects', '', buckets.Delayed)},
-      {label:'Not Started', value:buckets['Not Started'].length, color:'--grey', bg:'--grey-bg', icon:'bi-hourglass', onClick:()=> drilldownProjects('Not Started Projects', '', buckets['Not Started'])},
-    ]);
-
-    const {start, end} = periodBounds(mpPeriodType, null);
-    const opened = filtered.filter(p=> p.createdAt && new Date(p.createdAt) >= start && new Date(p.createdAt) <= end);
-    const closed = filtered.filter(p=> p.status==='Completed' && p.updatedAt && new Date(p.updatedAt) >= start && new Date(p.updatedAt) <= end);
-    const durations = filtered.map(projectDurationDays);
-    const plannedDurs = durations.map(d=>d.plannedDays).filter(v=>v!=null);
-    const actualDurs = durations.map(d=>d.actualDays).filter(v=>v!=null);
-    const avgPlanned = plannedDurs.length? Math.round(plannedDurs.reduce((a,b)=>a+b,0)/plannedDurs.length) : 0;
-    const avgActual = actualDurs.length? Math.round(actualDurs.reduce((a,b)=>a+b,0)/actualDurs.length) : 0;
-    const sumBudget = filtered.reduce((s,p)=>s+(p.approvedBudget||0),0);
-    const sumCommitted = filtered.reduce((s,p)=>s+(p.committedCost||0),0);
-    const sumActual = filtered.reduce((s,p)=>s+(p.actualCost||0),0);
-
-    renderKpiRow('mpKpis2', [
-      {label:`Opened This ${mpPeriodType}`, value:opened.length, color:'--blue', bg:'--blue-bg', icon:'bi-plus-circle', onClick:()=> drilldownProjects(`Opened this ${mpPeriodType.toLowerCase()}`, 'By project creation date', opened)},
-      {label:`Closed This ${mpPeriodType}`, value:closed.length, color:'--green', bg:'--green-bg', icon:'bi-check2-circle', onClick:()=> drilldownProjects(`Closed this ${mpPeriodType.toLowerCase()}`, 'Completed, last updated in period', closed)},
-      {label:'Avg Planned Duration', value:avgPlanned+' days', color:'--teal', bg:'--teal-light', icon:'bi-hourglass-split'},
-      {label:'Avg Actual Duration', value:avgActual+' days', color:'--sand', bg:'--sand-light', icon:'bi-hourglass-bottom'},
-      {label:'Total Approved Budget', value:fmtOMR(sumBudget), color:'--teal', bg:'--teal-light', icon:'bi-cash-stack'},
-      {label:'Total Committed', value:fmtOMR(sumCommitted), color:'--amber', bg:'--amber-bg', icon:'bi-wallet2'},
-      {label:'Total Actual Cost', value:fmtOMR(sumActual), color:'--grey', bg:'--grey-bg', icon:'bi-graph-up-arrow'},
-    ]);
-
-    renderCharts(filtered);
-  }
-
   function renderTable(){
     let rows = applyMpFilters();
     rows = sortRows(rows, 'mpTable', 'name');
@@ -4371,7 +4338,7 @@ function renderMasterProjects(){
         <td class="row-actions" onclick="event.stopPropagation()">
           <button class="icon-btn" title="Edit" onclick="editProjectById(${p.id})"><i class="bi bi-pencil"></i></button>
           <button class="icon-btn" title="Print Data Sheet" onclick="openProjectDataSheet(${p.id})"><i class="bi bi-file-earmark-pdf"></i></button>
-          <button class="icon-btn danger" title="Delete" onclick="deleteProject(${p.id})"><i class="bi bi-trash"></i></button>
+          ${canOnProject('projects','delete',p.id) ? `<button class="icon-btn danger" title="Delete" onclick="deleteProject(${p.id})"><i class="bi bi-trash"></i></button>` : ''}
         </td>
       </tr>`;
     }).join('') : `<tr class="no-click"><td colspan="16"><div class="empty-state">No projects match your search/filters.</div></td></tr>`;
@@ -4379,7 +4346,7 @@ function renderMasterProjects(){
     renderPagination('mpPagination', 'mpTable', meta, renderTable);
   }
 
-  function refreshRegister(){ renderKpis(); renderTable(); }
+  function refreshRegister(){ renderTable(); }
   refreshRegister();
   wireSortHeaders('mpTable', renderTable);
   document.getElementById('mpSearch').addEventListener('input', e=>{ searchState.mpTable = e.target.value; pageState.mpTable = 1; refreshRegister(); });
@@ -4393,7 +4360,6 @@ function renderMasterProjects(){
     pageState.mpTable = 1;
     renderMasterProjects();
   });
-  document.getElementById('mpPeriodType').addEventListener('change', e=>{ mpPeriodType = e.target.value; renderKpis(); });
   document.getElementById('btnNewProject').addEventListener('click', ()=> openProjectForm(null));
   document.getElementById('btnExportRegister').addEventListener('click', ()=> exportProjectRegisterCSV(applyMpFilters()));
   document.getElementById('btnExportIntakeLog').addEventListener('click', exportIntakeChangeLog);
@@ -4995,6 +4961,48 @@ function resetProjectFormTabs(){
 function materialValueOf(plannedQty, consumedQty, unitRate){
   return { planned: +((Number(plannedQty)||0)*(Number(unitRate)||0)).toFixed(3), actual: +((Number(consumedQty)||0)*(Number(unitRate)||0)).toFixed(3) };
 }
+/* ---- Progress % on each material / crew line, and the event Progress % that follows from it ----
+   A line's Progress % = Actual Qty / Planned Qty, shown automatically. Typing a value overrides it (row gets data-manual="1");
+   clearing the field or pressing the reset button goes back to automatic. An event that has measurable lines takes its own
+   Progress % from the average of them (read-only); an event without lines keeps the value typed on the event. The same
+   calculation (progress-calc.js) runs on the server when the project is saved. */
+function lineProgressCellHTML(kind, planned, actual, override){
+  const v = ProgressCalc.lineProgress(planned, actual, override);
+  return `<td class="prog-cell"><div class="actual-wrap"><input type="number" step="0.1" min="0" max="100" class="form-control col-narrow line-progress ${kind}-progress" value="${v==null?'':v}" placeholder="—" title="Actual Qty ÷ Planned Qty, worked out automatically. Type a value to override it."><button type="button" class="prog-reset" title="Back to automatic (actual ÷ planned)" aria-label="Reset progress to automatic"><i class="bi bi-arrow-counterclockwise"></i></button></div></td>`;
+}
+function lineProgressInputs(tr){
+  const mat = !!tr.querySelector('.mat-planned');
+  const planned = Number(tr.querySelector(mat?'.mat-planned':'.crew-qty').value)||0;
+  const actual = Number(tr.querySelector(mat?'.mat-consumed':'.crew-actual-qty').value)||0;
+  const name = (tr.querySelector(mat?'.mat-name':'.crew-name').value||'').trim();
+  return {planned, actual, name};
+}
+// Updates one line's Progress % field (automatic lines follow the quantities) and returns its value, or null if it cannot be measured.
+function refreshLineProgress(tr){
+  const input = tr.querySelector('.line-progress');
+  if(!input) return null;
+  const {planned, actual} = lineProgressInputs(tr);
+  const manual = tr.dataset.manual==='1' && input.value!=='';
+  if(!manual) delete tr.dataset.manual;
+  const v = ProgressCalc.lineProgress(planned, actual, manual ? input.value : null);
+  if(!manual) input.value = v==null ? '' : v;
+  return v;
+}
+function syncAllEventProgress(){
+  document.querySelectorAll('#pfEventsBody > tr.evt-main-row').forEach(main=>{
+    const input = main.querySelector('.evt-progress'), detail = main.nextElementSibling;
+    if(!input) return;
+    const lines = detail && detail.classList.contains('evt-detail-row') ? [...detail.querySelectorAll('.evt-materials-body tr, .evt-crews-body tr')] : [];
+    const values = lines.filter(tr=> lineProgressInputs(tr).name).map(refreshLineProgress);
+    const avg = ProgressCalc.averageProgress(values);
+    if(avg!=null){
+      input.value = avg; input.readOnly = true; input.classList.add('evt-progress-auto');
+      input.title = 'Average of the Progress % of this event\'s material and crew / contractor lines';
+    } else {
+      input.readOnly = false; input.classList.remove('evt-progress-auto'); input.title = '';
+    }
+  });
+}
 function materialRowHTML(m={}){
   const value = materialValueOf(m.plannedQty??0, m.consumedQty??0, m.unitRate??0);
   // Once a line is tied to a specific event (eventClientId), its Stage is derived from that
@@ -5004,7 +5012,7 @@ function materialRowHTML(m={}){
   const stageCell = m.eventClientId
     ? `<td class="mat-stage-display" style="color:var(--muted);white-space:nowrap;">${m.stage||''}</td>`
     : `<td><select class="form-select mat-stage">${STAGES.map(s=>`<option ${m.stage===s?'selected':''}>${s}</option>`).join('')}</select></td>`;
-  return `<tr data-event-client-id="${m.eventClientId||''}" data-entries="${esc(JSON.stringify(m.entries||[]))}">
+  return `<tr data-event-client-id="${m.eventClientId||''}" data-line-id="${m.id||''}" data-entries="${esc(JSON.stringify(m.entries||[]))}"${m.progressOverride!=null?' data-manual="1"':''}>
     <td><input type="checkbox" class="mat-select"></td>
     ${stageCell}
     <td><input class="form-control col-name mat-name" value="${m.materialName||''}" placeholder="e.g. DI Pipe 300mm"></td>
@@ -5012,6 +5020,7 @@ function materialRowHTML(m={}){
     <td><input class="form-control col-narrow mat-unit" value="${m.unit||''}" placeholder="m / no"></td>
     <td><input type="number" step="0.01" class="form-control col-narrow mat-planned" value="${m.plannedQty??0}"></td>
     <td class="actual-cell"><div class="actual-wrap"><input type="number" step="0.01" class="form-control col-narrow mat-consumed" value="${m.consumedQty??0}">${actualLogButtonHTML(m)}</div></td>
+    ${lineProgressCellHTML('mat', m.plannedQty, m.consumedQty, m.progressOverride)}
     <td><input type="number" step="0.001" class="form-control col-narrow mat-rate" value="${m3(m.unitRate??0)}"></td>
     <td class="mat-value-planned" data-value="${value.planned}" style="white-space:nowrap;font-weight:600;">${fmtCurrency(value.planned)}</td>
     <td class="mat-value-actual" data-value="${value.actual}" style="white-space:nowrap;font-weight:600;">${fmtCurrency(value.actual)}</td>
@@ -5051,7 +5060,7 @@ function crewRowHTML(c={}){
   const stageCell = c.eventClientId
     ? `<td class="crew-stage-display" style="color:var(--muted);white-space:nowrap;">${c.stage||''}</td>`
     : `<td><select class="form-select crew-stage">${STAGES.map(s=>`<option ${c.stage===s?'selected':''}>${s}</option>`).join('')}</select></td>`;
-  return `<tr data-event-client-id="${c.eventClientId||''}" data-entries="${esc(JSON.stringify(c.entries||[]))}">
+  return `<tr data-event-client-id="${c.eventClientId||''}" data-line-id="${c.id||''}" data-entries="${esc(JSON.stringify(c.entries||[]))}"${c.progressOverride!=null?' data-manual="1"':''}>
     <td><input type="checkbox" class="crew-select"></td>
     ${stageCell}
     <td><select class="form-select crew-type">${RESOURCE_TYPES.map(t=>`<option ${c.resourceType===t?'selected':''}>${t}</option>`).join('')}</select></td>
@@ -5060,6 +5069,7 @@ function crewRowHTML(c={}){
     <td><input class="form-control col-name crew-po" maxlength="200" value="${esc(c.poRef||'')}" placeholder="PO ref no." title="Sub contractor PO reference number"></td>
     <td><input type="number" step="1" class="form-control col-narrow crew-qty" value="${c.quantity??1}"></td>
     <td class="actual-cell"><div class="actual-wrap"><input type="number" step="0.01" class="form-control col-narrow crew-actual-qty" value="${c.actualQty??0}">${actualLogButtonHTML(c)}</div></td>
+    ${lineProgressCellHTML('crew', c.quantity??1, c.actualQty??0, c.progressOverride)}
     <td><select class="form-select crew-basis">${RATE_BASES.map(r=>`<option ${c.rateBasis===r?'selected':''}>${r}</option>`).join('')}</select></td>
     <td><input type="number" step="0.001" class="form-control col-narrow crew-rate" value="${m3(c.unitRate??0)}"></td>
     <td><input type="number" step="1" class="form-control col-narrow crew-days" value="${c.allocatedDays??0}"></td>
@@ -5116,10 +5126,10 @@ function materialsMiniTableHTML(rows){
       </div>
     </div>
     <div class="pf-line-table-wrap"><table class="dash-table pf-line-table">
-      <thead><tr><th style="width:24px;"><input type="checkbox" class="mat-select-all" title="Select all"></th><th>Stage</th><th>Material</th><th>Spec</th><th>Unit</th><th>Planned Qty</th><th>Consumed Qty</th><th>Unit Rate (OMR)</th><th>Planned Value (OMR)</th><th>Actual Value (OMR)</th><th>Supplier</th><th>Delivery</th><th>Status</th><th></th></tr></thead>
+      <thead><tr><th style="width:24px;"><input type="checkbox" class="mat-select-all" title="Select all"></th><th>Stage</th><th>Material</th><th>Spec</th><th>Unit</th><th>Planned Qty</th><th>Consumed Qty</th><th>Progress %</th><th>Unit Rate (OMR)</th><th>Planned Value (OMR)</th><th>Actual Value (OMR)</th><th>Supplier</th><th>Delivery</th><th>Status</th><th></th></tr></thead>
       <tbody class="evt-materials-body">${rows.map(materialRowHTML).join('')}</tbody>
       <tfoot><tr style="font-weight:700;background:var(--surface);">
-        <td colspan="8" style="text-align:right;">Total</td>
+        <td colspan="9" style="text-align:right;">Total</td>
         <td data-total-for="mat-value-planned">${fmtCurrency(totalPlanned)}</td>
         <td data-total-for="mat-value-actual">${fmtCurrency(totalActual)}</td>
         <td colspan="4"></td>
@@ -5140,10 +5150,10 @@ function crewsMiniTableHTML(rows){
       </div>
     </div>
     <div class="pf-line-table-wrap"><table class="dash-table pf-line-table">
-      <thead><tr><th style="width:24px;"><input type="checkbox" class="crew-select-all" title="Select all"></th><th>Stage</th><th>Type</th><th>Resource / Role</th><th>Contractor</th><th>PO Ref No.</th><th>Planned Qty</th><th>Actual Qty</th><th>Rate Basis</th><th>Unit Rate (OMR)</th><th>Days</th><th>Planned Value (OMR)</th><th>Actual Value (OMR)</th><th>Status</th><th></th></tr></thead>
+      <thead><tr><th style="width:24px;"><input type="checkbox" class="crew-select-all" title="Select all"></th><th>Stage</th><th>Type</th><th>Resource / Role</th><th>Contractor</th><th>PO Ref No.</th><th>Planned Qty</th><th>Actual Qty</th><th>Progress %</th><th>Rate Basis</th><th>Unit Rate (OMR)</th><th>Days</th><th>Planned Value (OMR)</th><th>Actual Value (OMR)</th><th>Status</th><th></th></tr></thead>
       <tbody class="evt-crews-body">${rows.map(crewRowHTML).join('')}</tbody>
       <tfoot><tr style="font-weight:700;background:var(--surface);">
-        <td colspan="11" style="text-align:right;">Total</td>
+        <td colspan="12" style="text-align:right;">Total</td>
         <td data-total-for="crew-value">${fmtCurrency(total)}</td>
         <td data-total-for="crew-value-actual">${fmtCurrency(totalActual)}</td>
         <td colspan="2"></td>
@@ -5225,6 +5235,7 @@ function renderRevisedCompletionDate(events){
   field.value = latest ? fmtDate(latest) : '—';
 }
 function recomputeProjectAutoFields(){
+  syncAllEventProgress(); // line Progress % -> each event's Progress % first, so the project figures below use it
   const startDate = document.getElementById('pfStartDate').value;
   const endDate = document.getElementById('pfEndDate').value;
   const events = readEventRows();
@@ -5409,6 +5420,7 @@ function renderEventsAccordion(events, materials, crews){
   let html = blocks.join('');
   if(orphanMaterials.length || orphanCrews.length) html += orphanResourcesBlockHTML(orphanMaterials, orphanCrews);
   document.getElementById('pfEventsBody').innerHTML = html;
+  syncAllEventProgress();
   refreshActualFlags();
 }
 /* =========================================================
@@ -5939,7 +5951,7 @@ function cloneLineItemsToEvents(sources, kind, targetEvents){
   const crews = readCrewRows();
   sources.forEach(source=>{
     targetEvents.forEach(t=>{
-      const clone = {...source, eventClientId: t.clientId, stage: t.stage, entries: []};
+      const clone = {...source, id: null, eventClientId: t.clientId, stage: t.stage, entries: []}; // a copy is a new line
       if(kind==='material') materials.push(clone); else crews.push(clone);
     });
   });
@@ -6033,6 +6045,8 @@ function wireLineTablesOnce(){
     }
     const logBtn = e.target.closest('.actual-log-btn');
     if(logBtn){ openActualLog(logBtn.closest('tr'), logBtn); return; }
+    const progReset = e.target.closest('.prog-reset');
+    if(progReset){ delete progReset.closest('tr').dataset.manual; recomputeProjectAutoFields(); return; }
     const toggleBtn = e.target.closest('.evt-toggle');
     if(toggleBtn){
       const detail = toggleBtn.closest('tr').nextElementSibling;
@@ -6160,7 +6174,7 @@ function wireLineTablesOnce(){
       recomputeProjectAutoFields();
     }
   });
-  const evtValueFields = '.evt-pstart, .evt-pend, .evt-astart, .evt-aend, .evt-progress, .evt-seq, .mat-planned, .mat-consumed, .mat-rate, .crew-qty, .crew-actual-qty, .crew-rate, .crew-days';
+  const evtValueFields = '.evt-pstart, .evt-pend, .evt-astart, .evt-aend, .evt-progress, .evt-seq, .mat-planned, .mat-consumed, .mat-progress, .mat-rate, .crew-qty, .crew-actual-qty, .crew-progress, .crew-rate, .crew-days';
   const evtChangeFields = evtValueFields + ', .evt-status, .evt-stage, .mat-stage, .crew-basis, .crew-status';
   const growTextarea = el => { if(!CSS.supports('field-sizing','content')){ el.style.height = 'auto'; el.style.height = Math.min(el.scrollHeight + 2, el === document.activeElement ? 240 : 120) + 'px'; } };
   eventsBody.addEventListener('focusin', e=>{ if(e.target.matches('textarea.evt-name, textarea.evt-remarks')) growTextarea(e.target); });
@@ -6184,12 +6198,19 @@ function wireLineTablesOnce(){
       growTextarea(t);
     }
     if(e.target.matches('.evt-pstart, .evt-pend, .evt-astart, .evt-aend')) updateEventRowComputed(e.target.closest('tr'));
+    // typing a Progress % on a line = a manual override (the field is only reset to automatic once it is left empty)
+    if(e.target.matches('.line-progress') && e.target.value!=='') e.target.closest('tr').dataset.manual = '1';
     if(e.target.matches('.mat-planned, .mat-consumed, .mat-rate')) updateMaterialRowValue(e.target.closest('tr'));
     if(e.target.matches('.mat-planned, .mat-consumed, .crew-qty, .crew-actual-qty')){ checkLineActuals(e.target.closest('tr')); renderEventsIssues(); }
     if(e.target.matches('.crew-qty, .crew-actual-qty, .crew-rate, .crew-days')) updateCrewRowValue(e.target.closest('tr'));
     if(e.target.matches(evtValueFields)) recomputeProjectAutoFields();
   });
   eventsBody.addEventListener('change', (e)=>{
+    if(e.target.matches('.line-progress')){
+      const tr = e.target.closest('tr');
+      if(e.target.value==='') delete tr.dataset.manual; // emptied = back to automatic
+      else e.target.value = Math.max(0, Math.min(100, Number(e.target.value)||0));
+    }
     if(e.target.matches('.evt-stage, .evt-assigned')) e.target.title = e.target.value;
     // Keep the status colour in step with the selection (also covers the fill-down arrow).
     if(e.target.matches('.evt-status')) e.target.dataset.status = e.target.value;
@@ -6317,11 +6338,17 @@ function currentEventStage(clientId){
   const mainRow = document.querySelector(`#pfEventsBody > tr.evt-main-row[data-client-id="${CSS.escape(clientId)}"]`);
   return mainRow ? mainRow.querySelector('.evt-stage').value : null;
 }
+// the typed Progress % when the person overrode it, otherwise null (automatic)
+function readLineOverride(tr){
+  const input = tr.querySelector('.line-progress');
+  return input && tr.dataset.manual==='1' && input.value!=='' ? Math.max(0, Math.min(100, Number(input.value)||0)) : null;
+}
 function readMaterialRow(tr){
   const eventClientId = tr.dataset.eventClientId || '';
   const linkedStage = eventClientId ? currentEventStage(eventClientId) : null;
   const stageSel = tr.querySelector('.mat-stage');
   return {
+    id: tr.dataset.lineId ? Number(tr.dataset.lineId) : null, // the saved row this is (none for a new or cloned line)
     stage: linkedStage || (stageSel ? stageSel.value : STAGES[3]),
     eventClientId: eventClientId || null,
     materialName: tr.querySelector('.mat-name').value.trim(),
@@ -6329,6 +6356,7 @@ function readMaterialRow(tr){
     unit: tr.querySelector('.mat-unit').value.trim(),
     plannedQty: Number(tr.querySelector('.mat-planned').value)||0,
     consumedQty: Number(tr.querySelector('.mat-consumed').value)||0,
+    progressOverride: readLineOverride(tr),
     unitRate: Number(tr.querySelector('.mat-rate').value)||0,
     entries: readLineEntries(tr),
     supplier: tr.querySelector('.mat-supplier').value.trim(),
@@ -6344,6 +6372,7 @@ function readCrewRow(tr){
   const linkedStage = eventClientId ? currentEventStage(eventClientId) : null;
   const stageSel = tr.querySelector('.crew-stage');
   return {
+    id: tr.dataset.lineId ? Number(tr.dataset.lineId) : null,
     stage: linkedStage || (stageSel ? stageSel.value : STAGES[3]),
     eventClientId: eventClientId || null,
     resourceType: tr.querySelector('.crew-type').value,
@@ -6352,6 +6381,7 @@ function readCrewRow(tr){
     poRef: tr.querySelector('.crew-po').value.trim(),
     quantity: Number(tr.querySelector('.crew-qty').value)||0,
     actualQty: Number(tr.querySelector('.crew-actual-qty').value)||0,
+    progressOverride: readLineOverride(tr),
     rateBasis: tr.querySelector('.crew-basis').value,
     unitRate: Number(tr.querySelector('.crew-rate').value)||0,
     allocatedDays: Number(tr.querySelector('.crew-days').value)||0,
@@ -8922,7 +8952,81 @@ function wireGovernoratePicker(){
   };
 }
 
+/* =========================================================
+   PER-PROJECT ACCESS
+   The server sends project.myAccess = what this login may do on EACH tab of THIS project (see access.js). A login with full rights
+   (the administrator, a normal project manager) gets pfAccess = null and nothing below runs. Otherwise: tabs it cannot view are hidden;
+   the Brief is locked without "edit"; the Sequence of Events is full / actual-quantities-only / view-only; other tabs lose the buttons
+   for what is not allowed. This is convenience only — the server refuses anything not allowed, whatever the page sends.
+   ========================================================= */
+const PF_TAB_RESOURCE = { brief:'projects', resources:'team', events:'events', cost:'cost', attachments:'documents', changeRequests:'change_requests', certificate:'certificates', vowd:'vowd', invoice:'invoices' };
+const PF_FULL = { projects:['view','create','edit','delete'], events:['view','actuals','create','edit','delete'], team:['view','edit'], cost:['view'],
+  documents:['view','create','edit','delete'], change_requests:['view','create','edit','delete'], certificates:['view','create','edit','delete'], vowd:['view','create','edit','delete'], invoices:['view','create','edit','delete'] };
+let pfAccess = null;
+function pfSetAccess(project){
+  const a = project && project.myAccess;
+  pfAccess = a && Object.entries(PF_FULL).some(([r, acts])=> acts.some(x=> !(a[r]||[]).includes(x))) ? a : null;
+}
+function pfCan(resource, action){
+  if(!pfAccess) return true;
+  const acts = pfAccess[resource] || [];
+  return acts.includes(action) || (resource==='events' && action==='actuals' && acts.includes('edit'));
+}
+function pfEventsMode(){ return pfCan('events','edit') ? 'full' : pfCan('events','actuals') ? 'actuals' : 'view'; }
+function pfLockInputs(root, keepSelector){
+  root.querySelectorAll('input, select, textarea').forEach(el=>{
+    if(keepSelector && el.matches(keepSelector)) return;
+    if(!el.disabled){ el.disabled = true; el.dataset.accessLock = '1'; }
+  });
+}
+function pfGateAll(){
+  if(!pfAccess) return;
+  const pane = t => document.querySelector(`#projectForm .pf-pane[data-pf-pane="${t}"]`);
+  const brief = pane('brief');
+  if(brief && !pfCan('projects','edit')){ pfLockInputs(brief); brief.querySelectorAll('button').forEach(b=>{ if(!b.disabled){ b.disabled = true; b.dataset.accessLock = '1'; } }); }
+  const ev = pane('events');
+  if(ev){
+    const mode = pfEventsMode();
+    ev.classList.toggle('pf-ev-actuals', mode==='actuals'); ev.classList.toggle('pf-ev-view', mode==='view');
+    ev.classList.toggle('pf-ev-nocreate', mode==='full' && !pfCan('events','create')); ev.classList.toggle('pf-ev-nodelete', mode==='full' && !pfCan('events','delete'));
+    if(mode==='actuals') pfLockInputs(ev, '.mat-consumed, .crew-actual-qty');
+    else if(mode==='view') pfLockInputs(ev);
+  }
+  Object.entries(PF_TAB_RESOURCE).forEach(([tab, r])=>{
+    if(tab==='brief' || tab==='events') return;
+    const p = pane(tab); if(!p) return;
+    const edit = pfCan(r,'edit'), create = r==='team' || r==='cost' ? edit : pfCan(r,'create'), del = r==='team' ? edit : r==='cost' ? false : pfCan(r,'delete');
+    p.classList.toggle('pf-p-nocreate', !create); p.classList.toggle('pf-p-noedit', !edit); p.classList.toggle('pf-p-nodelete', !del);
+    if(!edit && !create && !del) pfLockInputs(p, '[type=search], [data-keep-enabled]');
+  });
+}
+let pfGateTimer = 0;
+function pfGateSoon(){ if(pfAccess && !pfGateTimer) pfGateTimer = requestAnimationFrame(()=>{ pfGateTimer = 0; pfGateAll(); }); }
+function applyProjectAccess(){
+  document.querySelectorAll('#projectForm [data-access-lock]').forEach(el=>{ el.disabled = false; el.removeAttribute('data-access-lock'); }); // undo what an earlier project locked
+  document.querySelectorAll('#projectForm .pf-pane').forEach(p=> p.classList.remove('pf-ev-actuals','pf-ev-view','pf-ev-nocreate','pf-ev-nodelete','pf-p-nocreate','pf-p-noedit','pf-p-nodelete'));
+  document.querySelectorAll('#pfTabs .nav-link').forEach(b=>{
+    const key = b.dataset.pfTab;
+    b.closest('li').style.display = !pfAccess || key==='brief' || pfCan(PF_TAB_RESOURCE[key], 'view') ? '' : 'none';
+  });
+  const saveBtn = document.querySelector('#projectForm .modal-footer button[type=submit]');
+  if(saveBtn) saveBtn.style.display = !pfAccess || pfCan('projects','edit') || ['actuals','create','edit','delete'].some(a=> pfCan('events', a)) ? '' : 'none';
+  let note = document.getElementById('pfAccessNote');
+  if(!pfAccess){ if(note) note.remove(); return; }
+  if(!note){ note = document.createElement('div'); note.id = 'pfAccessNote'; note.className = 'pf-access-note'; document.getElementById('pfTabs').insertAdjacentElement('beforebegin', note); }
+  const mode = pfEventsMode(), parts = [];
+  if(!pfCan('projects','edit')) parts.push('the Project Brief is read-only');
+  if(mode==='actuals') parts.push('on the Sequence of Events you can enter <b>actual quantities only</b>');
+  else if(mode==='view' && pfCan('events','view')) parts.push('the Sequence of Events is read-only');
+  const hidden = Object.entries(PF_TAB_RESOURCE).filter(([t, r])=> t!=='brief' && !pfCan(r,'view')).length;
+  if(hidden) parts.push(`${hidden} tab${hidden===1?' is':'s are'} hidden`);
+  note.innerHTML = `<i class="bi bi-shield-lock"></i> Your access on this project: ${parts.length ? parts.join('; ') : 'some tabs are limited'}.`;
+  pfGateAll();
+}
+new MutationObserver(pfGateSoon).observe(document.getElementById('projectForm'), { childList:true, subtree:true });
+
 function openProjectForm(project){
+  pfSetAccess(project);
   wireProjectFormTabs();
   wireLineTablesOnce();
   wireProjectFormWarningsOnce();
@@ -9000,6 +9104,7 @@ function openProjectForm(project){
   }
   renderRevisedContractValue();
   recomputeProjectAutoFields();
+  applyProjectAccess();
   new bootstrap.Modal(document.getElementById('projectFormModal')).show();
 }
 
@@ -9139,6 +9244,7 @@ document.getElementById('projectForm').addEventListener('submit', async (e)=>{
     // "save the project first" (Attachments, Certificate, VOWD, Invoice, ...) unlock
     // immediately without the user having to close and reopen the modal.
     pfCurrentProject = saved;
+    pfSetAccess(saved); applyProjectAccess();
     document.getElementById('pfId').value = saved.id;
     document.getElementById('pfModalTitle').textContent = 'Edit Project';
     pfSelectedSubcontractorIds = (saved.subcontractorIds||[]).slice();
@@ -9615,6 +9721,7 @@ document.getElementById('btnLogout').addEventListener('click', async ()=>{
 });
 </script>
 <script src="/approvals.js"></script>
+<script src="/notifications.js"></script>
 </body>
 </html>
 

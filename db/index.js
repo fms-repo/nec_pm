@@ -88,7 +88,7 @@ async function runQuery(text, values) {
 }
 
 // Tables whose primary key isn't an `id` column, so an INSERT can't RETURNING id.
-const TABLES_WITHOUT_ID = new Set(['programme_trend', 'user_accounts', 'user_project_access', 'report_run_projects', 'report_deliveries']);
+const TABLES_WITHOUT_ID = new Set(['programme_trend', 'user_accounts', 'user_project_access', 'report_run_projects', 'report_deliveries', 'notification_reads', 'project_alert_state']);
 
 // Rewrites ? / @name placeholders to $n, skipping anything inside '...' string literals.
 function compile(sql) {
